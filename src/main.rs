@@ -116,7 +116,9 @@ fn fetch(client: &GitArchClient, settings: &Settings, sha: &str, name: &str) -> 
 }
 
 fn capabilities() -> Result<(), Error> {
-    todo!()
+    println!("push");
+    println!("list\n");
+    Ok(())
 }
 
 #[allow(unused_variables)]
