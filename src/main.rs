@@ -18,10 +18,10 @@ fn main() -> Result<(), Error> {
     let client = GitArchClient {};
     let alias = args
         .next()
-        .ok_or(Error::Args(String::from("missing alias argument")))?;
+        .ok_or_else(|| Error::Args(String::from("missing alias argument")))?;
     let url = args
         .next()
-        .ok_or(Error::Args(String::from("missing url argument")))?;
+        .ok_or_else(|| Error::Args(String::from("missing url argument")))?;
 
     let (account_id, ips_id): (Result<&str, Error>, Result<&str, Error>) = {
         if !url.starts_with("gitarch://") {
@@ -39,17 +39,21 @@ fn main() -> Result<(), Error> {
                     "Url does not have a prefix. Expected 'gitarch://publickey/ips",
                 ))),
             }?;
-            let account_id = url.get(..slash).ok_or(Error::Url(String::from(
-                "An exception ocurred while parsing the account_id",
-            )))?;
+            let account_id = url.get(..slash).ok_or_else(|| {
+                Error::Url(String::from(
+                    "An exception ocurred while parsing the account_id",
+                ))
+            })?;
             let end = if url.ends_with('/') {
                 url.len() - 1
             } else {
                 url.len()
             };
-            let ips_id = url.get((slash + 1)..end).ok_or(Error::Url(String::from(
-                "An exception ocurred while parsing the ips_id",
-            )))?;
+            let ips_id = url.get((slash + 1)..end).ok_or_else(|| {
+                Error::Url(String::from(
+                    "An exception ocurred while parsing the ips_id",
+                ))
+            })?;
             (Ok(account_id), Ok(ips_id))
         }
     };
