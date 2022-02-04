@@ -6,7 +6,7 @@ use std::{
 };
 
 use client::GitArchClient;
-use primitives::{Error, Key, Settings};
+use primitives::{Error, GitRef, Key, Settings};
 
 mod client;
 mod primitives;
@@ -98,7 +98,7 @@ fn main() -> Result<(), Error> {
             (Some("list"), Some("for-push"), None) => list(&client, &settings),
             (None, None, None) => return Ok(()),
             _ => {
-                println!("Unknown command.\n");
+                println!("unknown command\n");
                 Ok(())
             }
         }?
@@ -107,12 +107,38 @@ fn main() -> Result<(), Error> {
 
 #[allow(unused_variables)]
 fn push(client: &GitArchClient, settings: &Settings, ref_arg: &str) -> Result<(), Error> {
-    todo!()
+    let forced_push = ref_arg.starts_with('+');
+    let mut ref_args = ref_arg.split(':');
+
+    let src_ref = if forced_push {
+        &ref_args.next().unwrap()[1..]
+    } else {
+        ref_args.next().unwrap()
+    };
+
+    let dst_ref = ref_args.next().unwrap();
+    if src_ref != dst_ref {
+        return Err(Error::Ref(String::from("src_ref != dst_ref")));
+    }
+
+    // TODO: push refs to remote
+    println!("ok {}\n", dst_ref);
+    Ok(())
 }
 
 #[allow(unused_variables)]
 fn fetch(client: &GitArchClient, settings: &Settings, sha: &str, name: &str) -> Result<(), Error> {
-    todo!()
+    if name == "HEAD" {
+        return Ok(());
+    }
+    let git_ref = GitRef {
+        name: String::from(name),
+        sha: String::from(sha),
+    };
+    println!();
+
+    // TODO: fetch from remote
+    Ok(())
 }
 
 fn capabilities() -> Result<(), Error> {
@@ -123,5 +149,7 @@ fn capabilities() -> Result<(), Error> {
 
 #[allow(unused_variables)]
 fn list(client: &GitArchClient, settings: &Settings) -> Result<(), Error> {
-    todo!()
+    // TODO: fetch refs from remote
+    println!();
+    Ok(())
 }
