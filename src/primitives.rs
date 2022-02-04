@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::{env::VarError, io::Error as IOError, path::PathBuf};
 
 #[derive(Debug)]
@@ -21,4 +22,19 @@ pub struct Settings {
 pub struct Key {
     pub account_id: String,
     pub ips_id: String,
+}
+
+#[derive(Debug)]
+pub struct GitRef {
+    pub name: String,
+    pub sha: String,
+}
+
+impl GitRef {
+    fn bundle_path(&self, root: String) -> String {
+        let mut path = String::new();
+
+        path.push_str(&format!("{}/{}/{}.bundle", root, self.name, self.sha));
+        path
+    }
 }
