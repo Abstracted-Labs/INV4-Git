@@ -32,7 +32,7 @@ fn main() -> Result<(), Error> {
                 Ok(""),
             )
         } else {
-            let url = &url[9..];
+            let url = &url[10..];
             let slash = match url.find('/') {
                 Some(index) => Ok(index),
                 None => Err(Error::Url(String::from(
