@@ -2,6 +2,7 @@ use std::{env::VarError, io::Error as IOError, path::PathBuf};
 
 #[derive(Debug)]
 pub enum Error {
+    Ref(String),
     Args(String),
     Url(String),
     Var(VarError),
