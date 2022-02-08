@@ -16,7 +16,7 @@ fn main() -> Result<(), Error> {
     let mut args = args();
     args.next();
 
-    let client = GitArchClient {};
+    let client = GitArchClient::default();
     let alias = args
         .next()
         .ok_or_else(|| Error::Args(String::from("missing alias argument")))?;
