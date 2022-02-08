@@ -112,12 +112,18 @@ fn push(client: &GitArchClient, settings: &Settings, ref_arg: &str) -> Result<()
     let mut ref_args = ref_arg.split(':');
 
     let src_ref = if forced_push {
-        &ref_args.next().unwrap()[1..]
+        &ref_args
+            .next()
+            .ok_or_else(|| Error::Ref(String::from("Unexpected error while parsing refs")))?[1..]
     } else {
-        ref_args.next().unwrap()
+        ref_args
+            .next()
+            .ok_or_else(|| Error::Ref(String::from("Unexpected error while parsing refs")))?
     };
 
-    let dst_ref = ref_args.next().unwrap();
+    let dst_ref = ref_args
+        .next()
+        .ok_or_else(|| Error::Ref(String::from("Unexpected error while parsing refs")))?;
     if src_ref != dst_ref {
         return Err(Error::Ref(String::from("src_ref != dst_ref")));
     }
