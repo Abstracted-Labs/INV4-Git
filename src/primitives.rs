@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use std::{env::VarError, io::Error as IOError, path::PathBuf};
+use std::{env::VarError, io::Error as IOError, path::PathBuf, string::FromUtf8Error};
 
 #[derive(Debug)]
 pub enum Error {
@@ -8,6 +8,10 @@ pub enum Error {
     Url(String),
     Var(VarError),
     IO(IOError),
+    Path(String),
+    Command(IOError),
+    Custom(String),
+    Utf8(FromUtf8Error),
 }
 
 #[derive(Debug)]
