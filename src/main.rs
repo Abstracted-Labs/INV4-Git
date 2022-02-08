@@ -10,6 +10,7 @@ use primitives::{Error, GitRef, Key, Settings};
 
 mod client;
 mod primitives;
+mod util;
 
 fn main() -> Result<(), Error> {
     let mut args = args();
