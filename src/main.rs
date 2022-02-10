@@ -1,33 +1,37 @@
 use std::{
     env::{args, current_dir, var},
+    error::Error,
     fs::create_dir_all,
     io::stdin,
     path::PathBuf,
 };
 
 use client::GitArchClient;
-use primitives::{Error, GitRef, Key, Settings};
+use error::ErrorWrap;
+use primitives::{GitRef, Key, Settings};
 
 mod client;
+mod error;
 mod primitives;
 mod util;
 
-fn main() -> Result<(), Error> {
+type TupleResult<'a> = (
+    Result<&'a str, Box<dyn Error>>,
+    Result<&'a str, Box<dyn Error>>,
+);
+
+fn main() -> Result<(), Box<dyn Error>> {
     let mut args = args();
     args.next();
 
     let client = GitArchClient::default();
-    let alias = args
-        .next()
-        .ok_or_else(|| Error::Args(String::from("missing alias argument")))?;
-    let url = args
-        .next()
-        .ok_or_else(|| Error::Args(String::from("missing url argument")))?;
+    let alias = args.next().ok_or(ErrorWrap("missing alias argument"))?;
+    let url = args.next().ok_or(ErrorWrap("missing url argument"))?;
 
-    let (account_id, ips_id): (Result<&str, Error>, Result<&str, Error>) = {
+    let (account_id, ips_id): TupleResult = {
         if !url.starts_with("gitarch://") {
             (
-                Err(Error::Url(String::from(
+                Err(Box::new(ErrorWrap(
                     "Invalid url format. expected 'gitarch://publickey/ips'",
                 ))),
                 Ok(""),
@@ -36,37 +40,33 @@ fn main() -> Result<(), Error> {
             let url = &url[10..];
             let slash = match url.find('/') {
                 Some(index) => Ok(index),
-                None => Err(Error::Url(String::from(
+                None => Err(ErrorWrap(
                     "Url does not have a prefix. Expected 'gitarch://publickey/ips",
-                ))),
+                )),
             }?;
-            let account_id = url.get(..slash).ok_or_else(|| {
-                Error::Url(String::from(
-                    "An exception ocurred while parsing the account_id",
-                ))
-            })?;
+            let account_id = url.get(..slash).ok_or(ErrorWrap(
+                "An exception ocurred while parsing the account_id",
+            ))?;
             let end = if url.ends_with('/') {
                 url.len() - 1
             } else {
                 url.len()
             };
-            let ips_id = url.get((slash + 1)..end).ok_or_else(|| {
-                Error::Url(String::from(
-                    "An exception ocurred while parsing the ips_id",
-                ))
-            })?;
+            let ips_id = url
+                .get((slash + 1)..end)
+                .ok_or(ErrorWrap("An exception ocurred while parsing the ips_id"))?;
             (Ok(account_id), Ok(ips_id))
         }
     };
 
-    let git_dir = PathBuf::from(var("GIT_DIR").map_err(Error::Var)?);
-    let current_dir = current_dir().map_err(Error::IO)?;
+    let git_dir = PathBuf::from(var("GIT_DIR")?);
+    let current_dir = current_dir()?;
     let working_dir = current_dir
         .join(&git_dir)
         .join("remote-gitarch")
         .join(&alias);
 
-    create_dir_all(working_dir).map_err(Error::IO)?;
+    create_dir_all(working_dir)?;
 
     let settings = Settings {
         git_dir,
@@ -80,7 +80,7 @@ fn main() -> Result<(), Error> {
 
     loop {
         let mut input = String::new();
-        stdin().read_line(&mut input).map_err(Error::IO)?;
+        stdin().read_line(&mut input)?;
 
         if input.is_empty() {
             return Ok(());
@@ -97,7 +97,7 @@ fn main() -> Result<(), Error> {
             (Some("capabilities"), None, None) => capabilities(),
             (Some("list"), None, None) => list(&client, &settings),
             (Some("list"), Some("for-push"), None) => list(&client, &settings),
-            (None, None, None) => return Ok(()),
+            (None, None, None) => Ok(()),
             _ => {
                 println!("unknown command\n");
                 Ok(())
@@ -107,25 +107,25 @@ fn main() -> Result<(), Error> {
 }
 
 #[allow(unused_variables)]
-fn push(client: &GitArchClient, settings: &Settings, ref_arg: &str) -> Result<(), Error> {
+fn push(client: &GitArchClient, settings: &Settings, ref_arg: &str) -> Result<(), Box<dyn Error>> {
     let forced_push = ref_arg.starts_with('+');
     let mut ref_args = ref_arg.split(':');
 
     let src_ref = if forced_push {
         &ref_args
             .next()
-            .ok_or_else(|| Error::Ref(String::from("Unexpected error while parsing refs")))?[1..]
+            .ok_or(ErrorWrap("Unexpected error while parsing refs"))?[1..]
     } else {
         ref_args
             .next()
-            .ok_or_else(|| Error::Ref(String::from("Unexpected error while parsing refs")))?
+            .ok_or(ErrorWrap("Unexpected error while parsing refs"))?
     };
 
     let dst_ref = ref_args
         .next()
-        .ok_or_else(|| Error::Ref(String::from("Unexpected error while parsing refs")))?;
+        .ok_or(ErrorWrap("Unexpected error while parsing refs"))?;
     if src_ref != dst_ref {
-        return Err(Error::Ref(String::from("src_ref != dst_ref")));
+        return Err(Box::new(ErrorWrap("src_ref != dst_ref")));
     }
 
     // TODO: push refs to remote
@@ -134,7 +134,12 @@ fn push(client: &GitArchClient, settings: &Settings, ref_arg: &str) -> Result<()
 }
 
 #[allow(unused_variables)]
-fn fetch(client: &GitArchClient, settings: &Settings, sha: &str, name: &str) -> Result<(), Error> {
+fn fetch(
+    client: &GitArchClient,
+    settings: &Settings,
+    sha: &str,
+    name: &str,
+) -> Result<(), Box<dyn Error>> {
     if name == "HEAD" {
         return Ok(());
     }
@@ -148,14 +153,14 @@ fn fetch(client: &GitArchClient, settings: &Settings, sha: &str, name: &str) -> 
     Ok(())
 }
 
-fn capabilities() -> Result<(), Error> {
+fn capabilities() -> Result<(), Box<dyn Error>> {
     println!("push");
     println!("list\n");
     Ok(())
 }
 
 #[allow(unused_variables)]
-fn list(client: &GitArchClient, settings: &Settings) -> Result<(), Error> {
+fn list(client: &GitArchClient, settings: &Settings) -> Result<(), Box<dyn Error>> {
     // TODO: fetch refs from remote
     println!();
     Ok(())
