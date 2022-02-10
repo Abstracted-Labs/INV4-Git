@@ -57,9 +57,7 @@ pub fn config(setting: &str) -> Result<String, Error> {
     if !cmd.status.success() {
         Err(Error::Custom(String::from("Git config failed")))
     } else {
-        Ok(String::from(
-            String::from_utf8(cmd.stdout).map_err(Error::Utf8)?.trim(),
-        ))
+        Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
     }
 }
 
@@ -71,8 +69,6 @@ pub fn rev_parse(rev: &str) -> Result<String, Error> {
     if !cmd.status.success() {
         Err(Error::Custom(String::from("Git rev-parse failed")))
     } else {
-        Ok(String::from(
-            String::from_utf8(cmd.stdout).map_err(Error::Utf8)?.trim(),
-        ))
+        Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
     }
 }
