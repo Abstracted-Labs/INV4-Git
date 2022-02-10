@@ -8,7 +8,7 @@ pub struct ErrorWrap<T: Debug>(pub T);
 
 impl<T: Debug> Display for ErrorWrap<T> {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        write!(f, "{:?}", &self)
+        write!(f, "Internal git-remote-gitarch error: {:?}", &self.0)
     }
 }
 
