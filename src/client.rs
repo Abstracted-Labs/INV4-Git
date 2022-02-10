@@ -1,9 +1,9 @@
 #![allow(dead_code, clippy::too_many_arguments)]
 use sp_keyring::{sr25519::sr25519::Pair, AccountKeyring::Alice};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, error::Error};
 use subxt::{subxt, DefaultConfig, DefaultExtra, PairSigner};
 
-use crate::primitives::{Error, GitRef, Settings};
+use crate::primitives::{GitRef, Settings};
 
 #[subxt(runtime_metadata_path = "invarch_metadata.scale")]
 pub mod invarch {}
@@ -47,11 +47,11 @@ impl Default for GitArchClient {
 
 impl GitArchClient {
     #[allow(unused_variables)]
-    async fn fetch(&self, settings: Settings, git_ref: GitRef) -> Result<(), Error> {
+    async fn fetch(&self, settings: Settings, git_ref: GitRef) -> Result<(), Box<dyn Error>> {
         todo!()
     }
     #[allow(unused_variables)]
-    async fn push(&self, settings: Settings, local_ref: GitRef) -> Result<(), Error> {
+    async fn push(&self, settings: Settings, local_ref: GitRef) -> Result<(), Box<dyn Error>> {
         todo!()
     }
 }

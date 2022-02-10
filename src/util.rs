@@ -1,78 +1,61 @@
 #![allow(dead_code)]
-use std::{path::Path, process::Command};
+use std::{error::Error, path::Path, process::Command};
 
-use crate::primitives::Error;
+use crate::error::ErrorWrap;
 
-pub fn create_bundle(bundle: &Path, ref_name: &str) -> Result<(), Error> {
+pub fn create_bundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error>> {
     let cmd = Command::new("git")
         .args([
             "bundle",
             "create",
-            bundle
-                .to_str()
-                .ok_or_else(|| Error::Path(String::from("Invalid bundle path")))?,
+            bundle.to_str().ok_or(ErrorWrap("Invalid bundle path"))?,
             ref_name,
         ])
-        .output()
-        .map_err(Error::Command)?;
+        .output()?;
     if !cmd.status.success() {
-        Err(Error::Custom(String::from("Git bundle failed")))
+        Err(Box::new(ErrorWrap("Git bundle failed")))
     } else {
         Ok(())
     }
 }
 
-pub fn unbundle(bundle: &Path, ref_name: &str) -> Result<(), Error> {
+pub fn unbundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error>> {
     let cmd = Command::new("git")
         .args([
             "bundle",
             "create",
-            bundle
-                .to_str()
-                .ok_or_else(|| Error::Path(String::from("Invalid bundle path")))?,
+            bundle.to_str().ok_or(ErrorWrap("Invalid bundle path"))?,
             ref_name,
         ])
-        .output()
-        .map_err(Error::Command)?;
+        .output()?;
     if !cmd.status.success() {
-        Err(Error::Custom(String::from("Git unbundle failed")))
+        Err(Box::new(ErrorWrap("Git unbundle failed")))
     } else {
         Ok(())
     }
 }
 
-pub fn is_ancestor(base_ref: &str, remote_ref: &str) -> Result<bool, Error> {
+pub fn is_ancestor(base_ref: &str, remote_ref: &str) -> Result<bool, Box<dyn Error>> {
     let cmd = Command::new("git")
         .args(["merge-base", "--is-ancestor", remote_ref, base_ref])
-        .output()
-        .map_err(Error::Command)?;
+        .output()?;
     Ok(cmd.status.success())
 }
 
-pub fn config(setting: &str) -> Result<String, Error> {
-    let cmd = Command::new("git")
-        .args(["config", setting])
-        .output()
-        .map_err(Error::Command)?;
+pub fn config(setting: &str) -> Result<String, Box<dyn Error>> {
+    let cmd = Command::new("git").args(["config", setting]).output()?;
     if !cmd.status.success() {
-        Err(Error::Custom(String::from("Git config failed")))
+        Err(Box::new(ErrorWrap("Git config failed")))
     } else {
-        Ok(String::from(
-            String::from_utf8(cmd.stdout).map_err(Error::Utf8)?.trim(),
-        ))
+        Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
     }
 }
 
-pub fn rev_parse(rev: &str) -> Result<String, Error> {
-    let cmd = Command::new("git")
-        .args(["rev-parse", rev])
-        .output()
-        .map_err(Error::Command)?;
+pub fn rev_parse(rev: &str) -> Result<String, Box<dyn Error>> {
+    let cmd = Command::new("git").args(["rev-parse", rev]).output()?;
     if !cmd.status.success() {
-        Err(Error::Custom(String::from("Git rev-parse failed")))
+        Err(Box::new(ErrorWrap("Git rev-parse failed")))
     } else {
-        Ok(String::from(
-            String::from_utf8(cmd.stdout).map_err(Error::Utf8)?.trim(),
-        ))
+        Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
     }
 }
