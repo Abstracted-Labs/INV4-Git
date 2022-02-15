@@ -46,12 +46,10 @@ impl Default for GitArchClient {
 }
 
 impl GitArchClient {
-    #[allow(unused_variables)]
-    async fn fetch(&self, settings: Settings, git_ref: GitRef) -> Result<(), Box<dyn Error>> {
+    async fn fetch(&self, _settings: Settings, _git_ref: GitRef) -> Result<(), Box<dyn Error>> {
         todo!()
     }
-    #[allow(unused_variables)]
-    async fn push(&self, settings: Settings, local_ref: GitRef) -> Result<(), Box<dyn Error>> {
+    async fn push(&self, _settings: Settings, _local_ref: GitRef) -> Result<(), Box<dyn Error>> {
         todo!()
     }
 }
