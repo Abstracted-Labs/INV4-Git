@@ -10,9 +10,6 @@ sp-keyring = "5.0.0"
 git = "https://github.com/paritytech/subxt"
 branch = "master"
 
-#[dependencies.tokio]
-#version = "1.16.1"
-#features = ["macros", "rt-multi-thread"]
 
 [dependencies.codec]
 package = "parity-scale-codec"
