@@ -15,48 +15,43 @@ mod error;
 mod primitives;
 mod util;
 
-type TupleResult<'a> = (
-    Result<&'a str, Box<dyn Error>>,
-    Result<&'a str, Box<dyn Error>>,
-);
-
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut args = args();
-    args.next();
+    let (client, alias, url) = {
+        let mut args = args();
+        args.next();
+        (
+            GitArchClient::default(),
+            args.next().ok_or(ErrorWrap("missing alias argument"))?,
+            args.next().ok_or(ErrorWrap("missing url argument"))?,
+        )
+    };
 
-    let client = GitArchClient::default();
-    let alias = args.next().ok_or(ErrorWrap("missing alias argument"))?;
-    let url = args.next().ok_or(ErrorWrap("missing url argument"))?;
+    if !url.starts_with("gitarch://") {
+        return Err(Box::new(ErrorWrap(
+            "Invalid url format. expected 'gitarch://publickey/ips",
+        )));
+    }
 
-    let (account_id, ips_id): TupleResult = {
-        if !url.starts_with("gitarch://") {
-            (
-                Err(Box::new(ErrorWrap(
-                    "Invalid url format. expected 'gitarch://publickey/ips'",
-                ))),
-                Ok(""),
-            )
+    let (account_id, ips_id) = {
+        let url = &url[10..];
+        let slash = match url.find('/') {
+            Some(index) => Ok(index),
+            None => Err(ErrorWrap(
+                "Url does not have a prefix. Expected 'gitarch://publickey/ips",
+            )),
+        }?;
+        let account_id = url.get(..slash).ok_or(ErrorWrap(
+            "An exception ocurred while parsing the account_id",
+        ))?;
+        let end = if url.ends_with('/') {
+            url.len() - 1
         } else {
-            let url = &url[10..];
-            let slash = match url.find('/') {
-                Some(index) => Ok(index),
-                None => Err(ErrorWrap(
-                    "Url does not have a prefix. Expected 'gitarch://publickey/ips",
-                )),
-            }?;
-            let account_id = url.get(..slash).ok_or(ErrorWrap(
-                "An exception ocurred while parsing the account_id",
-            ))?;
-            let end = if url.ends_with('/') {
-                url.len() - 1
-            } else {
-                url.len()
-            };
-            let ips_id = url
-                .get((slash + 1)..end)
-                .ok_or(ErrorWrap("An exception ocurred while parsing the ips_id"))?;
-            (Ok(account_id), Ok(ips_id))
-        }
+            url.len()
+        };
+        let ips_id = url
+            .get((slash + 1)..end)
+            .ok_or(ErrorWrap("An exception ocurred while parsing the ips_id"))?;
+        (account_id, ips_id)
     };
 
     let git_dir = PathBuf::from(var("GIT_DIR")?);
@@ -73,8 +68,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         remote_url: url.to_owned(),
         remote_alias: alias,
         root: Key {
-            account_id: String::from(account_id?),
-            ips_id: String::from(ips_id?),
+            account_id: String::from(account_id),
+            ips_id: String::from(ips_id),
         },
     };
 
