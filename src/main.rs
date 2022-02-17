@@ -3,12 +3,14 @@ use std::{
     error::Error,
     fs::create_dir_all,
     io::stdin,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use client::GitArchClient;
 use error::ErrorWrap;
 use primitives::{GitRef, Key, Settings};
+use subxt::sp_runtime::AccountId32;
 
 mod client;
 mod error;
@@ -16,59 +18,54 @@ mod primitives;
 mod util;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (client, alias, url) = {
+    let (client, alias, raw_url) = {
         let mut args = args();
         args.next();
         (
             GitArchClient::default(),
-            args.next().ok_or(ErrorWrap("missing alias argument"))?,
-            args.next().ok_or(ErrorWrap("missing url argument"))?,
+            args.next().ok_or(ErrorWrap("Missing alias argument."))?,
+            args.next().ok_or(ErrorWrap("Missing url argument."))?,
         )
     };
 
-    if !url.starts_with("gitarch://") {
-        return Err(Box::new(ErrorWrap(
-            "Invalid url format. expected 'gitarch://publickey/ips",
-        )));
-    }
-
     let (account_id, ips_id) = {
-        let url = &url[10..];
-        let slash = match url.find('/') {
-            Some(index) => Ok(index),
-            None => Err(ErrorWrap(
-                "Url does not have a prefix. Expected 'gitarch://publickey/ips",
-            )),
-        }?;
-        let account_id = url.get(..slash).ok_or(ErrorWrap(
-            "An exception ocurred while parsing the account_id",
-        ))?;
-        let end = if url.ends_with('/') {
-            url.len() - 1
-        } else {
-            url.len()
-        };
-        let ips_id = url
-            .get((slash + 1)..end)
-            .ok_or(ErrorWrap("An exception ocurred while parsing the ips_id"))?;
-        (account_id, ips_id)
+        let mut url = Path::new(&raw_url).components();
+        url.next();
+        (
+            AccountId32::from_str(
+                url.next()
+                    .ok_or(ErrorWrap(
+                        "Missing Account ID. Expected 'gitarch://>account_id</ips_id'",
+                    ))?
+                    .as_os_str()
+                    .to_str()
+                    .ok_or(ErrorWrap(
+                        "Missing account id. Expected: 'gitarch://>account_id</ips_id'",
+                    ))?,
+            )?,
+            url.next()
+                .ok_or(ErrorWrap(
+                    "Missing IPS id. Expectec: 'gitarch://account_id/>ips_id<'",
+                ))?
+                .as_os_str()
+                .to_str()
+                .ok_or(ErrorWrap("Input was not UTF-8"))?,
+        )
     };
 
     let git_dir = PathBuf::from(var("GIT_DIR")?);
-    let current_dir = current_dir()?;
-    let working_dir = current_dir
-        .join(&git_dir)
-        .join("remote-gitarch")
-        .join(&alias);
-
-    create_dir_all(working_dir)?;
+    create_dir_all(
+        current_dir()?
+            .join(&git_dir)
+            .join("remote-gitarch")
+            .join(&alias),
+    )?;
 
     let settings = Settings {
         git_dir,
-        remote_url: url.to_owned(),
         remote_alias: alias,
         root: Key {
-            account_id: String::from(account_id),
+            account_id,
             ips_id: String::from(ips_id),
         },
     };
@@ -82,11 +79,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         let mut args = input.split_ascii_whitespace();
-        let cmd = args.next();
-        let arg1 = args.next();
-        let arg2 = args.next();
 
-        match (cmd, arg1, arg2) {
+        match (args.next(), args.next(), args.next()) {
             (Some("push"), Some(ref_arg), None) => push(&client, &settings, ref_arg),
             (Some("fetch"), Some(sha), Some(name)) => fetch(&client, &settings, sha, name),
             (Some("capabilities"), None, None) => capabilities(),
@@ -101,12 +95,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-#[allow(unused_variables)]
-fn push(client: &GitArchClient, settings: &Settings, ref_arg: &str) -> Result<(), Box<dyn Error>> {
-    let forced_push = ref_arg.starts_with('+');
+fn push(
+    _client: &GitArchClient,
+    _settings: &Settings,
+    ref_arg: &str,
+) -> Result<(), Box<dyn Error>> {
     let mut ref_args = ref_arg.split(':');
 
-    let src_ref = if forced_push {
+    let src_ref = if ref_arg.starts_with('+') {
         &ref_args
             .next()
             .ok_or(ErrorWrap("Unexpected error while parsing refs"))?[1..]
@@ -120,7 +116,7 @@ fn push(client: &GitArchClient, settings: &Settings, ref_arg: &str) -> Result<()
         .next()
         .ok_or(ErrorWrap("Unexpected error while parsing refs"))?;
     if src_ref != dst_ref {
-        return Err(Box::new(ErrorWrap("src_ref != dst_ref")));
+        return Err(ErrorWrap("src_ref != dst_ref").into());
     }
 
     // TODO: push refs to remote
@@ -128,17 +124,16 @@ fn push(client: &GitArchClient, settings: &Settings, ref_arg: &str) -> Result<()
     Ok(())
 }
 
-#[allow(unused_variables)]
 fn fetch(
-    client: &GitArchClient,
-    settings: &Settings,
+    _client: &GitArchClient,
+    _settings: &Settings,
     sha: &str,
     name: &str,
 ) -> Result<(), Box<dyn Error>> {
     if name == "HEAD" {
         return Ok(());
     }
-    let git_ref = GitRef {
+    let _git_ref = GitRef {
         name: String::from(name),
         sha: String::from(sha),
     };
@@ -154,8 +149,7 @@ fn capabilities() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[allow(unused_variables)]
-fn list(client: &GitArchClient, settings: &Settings) -> Result<(), Box<dyn Error>> {
+fn list(_client: &GitArchClient, _settings: &Settings) -> Result<(), Box<dyn Error>> {
     // TODO: fetch refs from remote
     println!();
     Ok(())

@@ -1,16 +1,17 @@
 use std::path::PathBuf;
 
+use subxt::sp_runtime::AccountId32;
+
 #[derive(Debug)]
 pub struct Settings {
     pub git_dir: PathBuf,
     pub remote_alias: String,
-    pub remote_url: String,
     pub root: Key,
 }
 
 #[derive(Debug)]
 pub struct Key {
-    pub account_id: String,
+    pub account_id: AccountId32,
     pub ips_id: String,
 }
 
@@ -21,11 +22,7 @@ pub struct GitRef {
 }
 
 impl GitRef {
-    #[allow(dead_code)]
-    fn bundle_path(&self, root: String) -> String {
-        let mut path = String::new();
-
-        path.push_str(&format!("{}/{}/{}.bundle", root, self.name, self.sha));
-        path
+    fn _bundle_path(&self, root: String) -> PathBuf {
+        PathBuf::from(root).join(&self.name).join(&self.sha)
     }
 }
