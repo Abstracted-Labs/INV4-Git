@@ -12,7 +12,7 @@ pub fn _create_bundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error
         ])
         .output()?;
     if !cmd.status.success() {
-        Err(Box::new(ErrorWrap("Git bundle failed")))
+        Err(ErrorWrap("Git bundle failed").into())
     } else {
         Ok(())
     }
@@ -28,7 +28,7 @@ pub fn _unbundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error>> {
         ])
         .output()?;
     if !cmd.status.success() {
-        Err(Box::new(ErrorWrap("Git unbundle failed")))
+        Err(ErrorWrap("Git unbundle failed").into())
     } else {
         Ok(())
     }
@@ -44,7 +44,7 @@ pub fn _is_ancestor(base_ref: &str, remote_ref: &str) -> Result<bool, Box<dyn Er
 pub fn _config(setting: &str) -> Result<String, Box<dyn Error>> {
     let cmd = Command::new("git").args(["config", setting]).output()?;
     if !cmd.status.success() {
-        Err(Box::new(ErrorWrap("Git config failed")))
+        Err(ErrorWrap("Git config failed").into())
     } else {
         Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
     }
@@ -53,7 +53,7 @@ pub fn _config(setting: &str) -> Result<String, Box<dyn Error>> {
 pub fn _rev_parse(rev: &str) -> Result<String, Box<dyn Error>> {
     let cmd = Command::new("git").args(["rev-parse", rev]).output()?;
     if !cmd.status.success() {
-        Err(Box::new(ErrorWrap("Git rev-parse failed")))
+        Err(ErrorWrap("Git rev-parse failed").into())
     } else {
         Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
     }
