@@ -4,3 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+sp-keyring = "5.0.0"
+
+[dependencies.subxt]
+git = "https://github.com/paritytech/subxt"
+branch = "master"
+
+
+[dependencies.codec]
+package = "parity-scale-codec"
+version = "2"
+default-features = false
+features = ["derive", "full", "bit-vec"]

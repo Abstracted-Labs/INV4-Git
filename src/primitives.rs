@@ -1,26 +1,17 @@
-#![allow(dead_code)]
-use std::{env::VarError, io::Error as IOError, path::PathBuf};
+use std::path::PathBuf;
 
-#[derive(Debug)]
-pub enum Error {
-    Ref(String),
-    Args(String),
-    Url(String),
-    Var(VarError),
-    IO(IOError),
-}
+use subxt::sp_runtime::AccountId32;
 
 #[derive(Debug)]
 pub struct Settings {
     pub git_dir: PathBuf,
     pub remote_alias: String,
-    pub remote_url: String,
     pub root: Key,
 }
 
 #[derive(Debug)]
 pub struct Key {
-    pub account_id: String,
+    pub account_id: AccountId32,
     pub ips_id: String,
 }
 
@@ -31,10 +22,7 @@ pub struct GitRef {
 }
 
 impl GitRef {
-    fn bundle_path(&self, root: String) -> String {
-        let mut path = String::new();
-
-        path.push_str(&format!("{}/{}/{}.bundle", root, self.name, self.sha));
-        path
+    fn _bundle_path(&self, root: String) -> PathBuf {
+        PathBuf::from(root).join(&self.name).join(&self.sha)
     }
 }
