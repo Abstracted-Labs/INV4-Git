@@ -1,8 +1,8 @@
-use std::{error::Error, path::Path, process::Command};
+use std::{path::Path, process::Command};
 
-use crate::error::ErrorWrap;
+use crate::{error::ErrorWrap, primitives::BoxResult};
 
-pub fn _create_bundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error>> {
+pub fn _create_bundle(bundle: &Path, ref_name: &str) -> BoxResult<()> {
     let cmd = Command::new("git")
         .args([
             "bundle",
@@ -18,7 +18,7 @@ pub fn _create_bundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error
     }
 }
 
-pub fn _unbundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error>> {
+pub fn _unbundle(bundle: &Path, ref_name: &str) -> BoxResult<()> {
     let cmd = Command::new("git")
         .args([
             "bundle",
@@ -34,14 +34,14 @@ pub fn _unbundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error>> {
     }
 }
 
-pub fn _is_ancestor(base_ref: &str, remote_ref: &str) -> Result<bool, Box<dyn Error>> {
+pub fn _is_ancestor(base_ref: &str, remote_ref: &str) -> BoxResult<bool> {
     let cmd = Command::new("git")
         .args(["merge-base", "--is-ancestor", remote_ref, base_ref])
         .output()?;
     Ok(cmd.status.success())
 }
 
-pub fn _config(setting: &str) -> Result<String, Box<dyn Error>> {
+pub fn _config(setting: &str) -> BoxResult<String> {
     let cmd = Command::new("git").args(["config", setting]).output()?;
     if !cmd.status.success() {
         Err(ErrorWrap("Git config failed").into())
@@ -50,7 +50,7 @@ pub fn _config(setting: &str) -> Result<String, Box<dyn Error>> {
     }
 }
 
-pub fn _rev_parse(rev: &str) -> Result<String, Box<dyn Error>> {
+pub fn _rev_parse(rev: &str) -> BoxResult<String> {
     let cmd = Command::new("git").args(["rev-parse", rev]).output()?;
     if !cmd.status.success() {
         Err(ErrorWrap("Git rev-parse failed").into())

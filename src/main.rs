@@ -1,6 +1,5 @@
 use std::{
     env::{args, current_dir, var},
-    error::Error,
     fs::create_dir_all,
     io::stdin,
     path::{Path, PathBuf},
@@ -9,7 +8,7 @@ use std::{
 
 use client::GitArchClient;
 use error::ErrorWrap;
-use primitives::{GitRef, Key, Settings};
+use primitives::{BoxResult, GitRef, Key, Settings};
 use subxt::sp_runtime::AccountId32;
 
 mod client;
@@ -17,7 +16,7 @@ mod error;
 mod primitives;
 mod util;
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> BoxResult<()> {
     let (client, alias, raw_url) = {
         let mut args = args();
         args.next();
@@ -95,11 +94,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn push(
-    _client: &GitArchClient,
-    _settings: &Settings,
-    ref_arg: &str,
-) -> Result<(), Box<dyn Error>> {
+fn push(_client: &GitArchClient, _settings: &Settings, ref_arg: &str) -> BoxResult<()> {
     let mut ref_args = ref_arg.split(':');
 
     let src_ref = if ref_arg.starts_with('+') {
@@ -124,12 +119,7 @@ fn push(
     Ok(())
 }
 
-fn fetch(
-    _client: &GitArchClient,
-    _settings: &Settings,
-    sha: &str,
-    name: &str,
-) -> Result<(), Box<dyn Error>> {
+fn fetch(_client: &GitArchClient, _settings: &Settings, sha: &str, name: &str) -> BoxResult<()> {
     if name == "HEAD" {
         return Ok(());
     }
@@ -143,13 +133,13 @@ fn fetch(
     Ok(())
 }
 
-fn capabilities() -> Result<(), Box<dyn Error>> {
+fn capabilities() -> BoxResult<()> {
     println!("push");
     println!("list\n");
     Ok(())
 }
 
-fn list(_client: &GitArchClient, _settings: &Settings) -> Result<(), Box<dyn Error>> {
+fn list(_client: &GitArchClient, _settings: &Settings) -> BoxResult<()> {
     // TODO: fetch refs from remote
     println!();
     Ok(())

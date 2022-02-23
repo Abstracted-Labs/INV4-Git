@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{error::Error, path::PathBuf};
 
 use subxt::sp_runtime::AccountId32;
 
@@ -26,3 +26,5 @@ impl GitRef {
         PathBuf::from(root).join(&self.name).join(&self.sha)
     }
 }
+
+pub type BoxResult<T> = Result<T, Box<dyn Error>>;
