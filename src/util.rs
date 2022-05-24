@@ -1,20 +1,20 @@
 use std::{path::Path, process::Command};
 
-use crate::{error::ErrorWrap, primitives::BoxResult};
+use crate::primitives::BoxResult;
 
 pub fn _create_bundle(bundle: &Path, ref_name: &str) -> BoxResult<()> {
     let cmd = Command::new("git")
         .args([
             "bundle",
             "create",
-            bundle.to_str().ok_or(ErrorWrap("Invalid bundle path"))?,
+            bundle.to_str().ok_or("Invalid bundle path")?,
             ref_name,
         ])
         .output()?;
-    if !cmd.status.success() {
-        Err(ErrorWrap("Git bundle failed").into())
-    } else {
+    if cmd.status.success() {
         Ok(())
+    } else {
+        Err("Git bundle failed".into())
     }
 }
 
@@ -23,14 +23,14 @@ pub fn _unbundle(bundle: &Path, ref_name: &str) -> BoxResult<()> {
         .args([
             "bundle",
             "create",
-            bundle.to_str().ok_or(ErrorWrap("Invalid bundle path"))?,
+            bundle.to_str().ok_or("Invalid bundle path")?,
             ref_name,
         ])
         .output()?;
-    if !cmd.status.success() {
-        Err(ErrorWrap("Git unbundle failed").into())
-    } else {
+    if cmd.status.success() {
         Ok(())
+    } else {
+        Err("Git unbundle failed".into())
     }
 }
 
@@ -43,18 +43,18 @@ pub fn _is_ancestor(base_ref: &str, remote_ref: &str) -> BoxResult<bool> {
 
 pub fn _config(setting: &str) -> BoxResult<String> {
     let cmd = Command::new("git").args(["config", setting]).output()?;
-    if !cmd.status.success() {
-        Err(ErrorWrap("Git config failed").into())
-    } else {
+    if cmd.status.success() {
         Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
+    } else {
+        Err("Git config failed".into())
     }
 }
 
 pub fn _rev_parse(rev: &str) -> BoxResult<String> {
     let cmd = Command::new("git").args(["rev-parse", rev]).output()?;
-    if !cmd.status.success() {
-        Err(ErrorWrap("Git rev-parse failed").into())
-    } else {
+    if cmd.status.success() {
         Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
+    } else {
+        Err("Git rev-parse failed".into())
     }
 }

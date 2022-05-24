@@ -1,4 +1,9 @@
-#![allow(clippy::too_many_arguments, clippy::enum_variant_names)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::enum_variant_names,
+    clippy::used_underscore_binding,
+    clippy::module_name_repetitions
+)]
 use sp_keyring::{sr25519::sr25519::Pair, AccountKeyring::Alice};
 use subxt::{subxt, DefaultConfig, DefaultExtra, PairSigner};
 
