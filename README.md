@@ -9,7 +9,7 @@ cargo install --git https://github.com/InvArch/git-remote-gitarch
 The binary will be installed at `~/.cargo/bin/` as `git-remote-gitarch`
 
 ## Testing
-Testing requires a running a local node and an IP Set on it.
+Testing requires a running a local node and creating an IP Set on it.
 
 ### Running the local node:
 ```sh
