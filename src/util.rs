@@ -1,60 +1,60 @@
-use std::{error::Error, path::Path, process::Command};
+use cid::{multihash::MultihashGeneric, CidGeneric};
+use std::{path::Path, process::Command};
+use subxt::sp_core::H256;
 
-use crate::error::ErrorWrap;
+use crate::primitives::BoxResult;
 
-pub fn _create_bundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error>> {
+#[macro_export]
+macro_rules! error {
+    ($x:expr) => {{
+        return Err($x.into());
+    }};
+}
+
+pub fn create_bundle(bundle: &Path) -> BoxResult<()> {
     let cmd = Command::new("git")
         .args([
             "bundle",
             "create",
-            bundle.to_str().ok_or(ErrorWrap("Invalid bundle path"))?,
-            ref_name,
+            bundle.to_str().ok_or("Invalid bundle path")?,
+            "--all",
         ])
         .output()?;
-    if !cmd.status.success() {
-        Err(ErrorWrap("Git bundle failed").into())
-    } else {
+    if cmd.status.success() {
         Ok(())
+    } else {
+        Err("Git bundle failed".into())
     }
 }
 
-pub fn _unbundle(bundle: &Path, ref_name: &str) -> Result<(), Box<dyn Error>> {
+pub fn pull_from_bundle(dir: &Path) -> BoxResult<()> {
     let cmd = Command::new("git")
-        .args([
-            "bundle",
-            "create",
-            bundle.to_str().ok_or(ErrorWrap("Invalid bundle path"))?,
-            ref_name,
-        ])
+        .current_dir(dir)
+        .args(["pull", "gitarch.bundle"])
         .output()?;
-    if !cmd.status.success() {
-        Err(ErrorWrap("Git unbundle failed").into())
-    } else {
+
+    if cmd.status.success() {
         Ok(())
+    } else {
+        error!("Pull from bundle failed")
     }
 }
 
-pub fn _is_ancestor(base_ref: &str, remote_ref: &str) -> Result<bool, Box<dyn Error>> {
+pub fn show_ref(dir: &Path) -> BoxResult<String> {
     let cmd = Command::new("git")
-        .args(["merge-base", "--is-ancestor", remote_ref, base_ref])
+        .current_dir(dir)
+        .arg("show-ref")
         .output()?;
-    Ok(cmd.status.success())
-}
 
-pub fn _config(setting: &str) -> Result<String, Box<dyn Error>> {
-    let cmd = Command::new("git").args(["config", setting]).output()?;
-    if !cmd.status.success() {
-        Err(ErrorWrap("Git config failed").into())
+    if cmd.status.success() {
+        Ok(String::from_utf8(cmd.stdout)?)
     } else {
-        Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
+        error!("git show-ref failed")
     }
 }
 
-pub fn _rev_parse(rev: &str) -> Result<String, Box<dyn Error>> {
-    let cmd = Command::new("git").args(["rev-parse", rev]).output()?;
-    if !cmd.status.success() {
-        Err(ErrorWrap("Git rev-parse failed").into())
-    } else {
-        Ok(String::from_utf8(cmd.stdout)?.trim().to_owned())
-    }
+pub fn generate_cid(hash: H256) -> BoxResult<CidGeneric<32>> {
+    Ok(CidGeneric::new_v0(MultihashGeneric::<32>::from_bytes(
+        hex::decode(format!("{:?}", hash).replace("0x", "1220"))?.as_slice(),
+    )?)?)
 }

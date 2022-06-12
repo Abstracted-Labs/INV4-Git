@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use subxt::sp_runtime::AccountId32;
+use std::{error::Error, path::PathBuf};
 
 #[derive(Debug)]
 pub struct Settings {
@@ -11,18 +9,8 @@ pub struct Settings {
 
 #[derive(Debug)]
 pub struct Key {
-    pub account_id: AccountId32,
-    pub ips_id: String,
+    pub ips_id: u64,
+    pub subasset_id: Option<u64>,
 }
 
-#[derive(Debug)]
-pub struct GitRef {
-    pub name: String,
-    pub sha: String,
-}
-
-impl GitRef {
-    fn _bundle_path(&self, root: String) -> PathBuf {
-        PathBuf::from(root).join(&self.name).join(&self.sha)
-    }
-}
+pub type BoxResult<T> = Result<T, Box<dyn Error>>;

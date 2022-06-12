@@ -4,15 +4,24 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sp-keyring = "5.0.0"
+sp-keyring = "6.0.0"
+ipfs-api = "0.15.0"
+cid = "0.8.5"
+hex = "0.4.3"
+futures = "0.3.21"
+temp-dir = "0.1.11"
+git2 = "0.14.4"
+
+[dependencies.tokio]
+version = "1.19.1"
+features = ["macros", "rt-multi-thread"]
 
 [dependencies.subxt]
 git = "https://github.com/paritytech/subxt"
 branch = "master"
 
-
 [dependencies.codec]
 package = "parity-scale-codec"
-version = "2"
+version = "3.1.2"
 default-features = false
 features = ["derive", "full", "bit-vec"]
