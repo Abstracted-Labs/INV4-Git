@@ -1,5 +1,8 @@
 use cid::{multihash::MultihashGeneric, CidGeneric};
-use std::{path::Path, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 use subxt::sp_core::H256;
 
 use crate::primitives::BoxResult;
@@ -27,10 +30,10 @@ pub fn create_bundle(bundle: &Path) -> BoxResult<()> {
     }
 }
 
-pub fn pull_from_bundle(dir: &Path) -> BoxResult<()> {
+pub fn pull_from_bundle(dir: &Path, bundle_path: &PathBuf) -> BoxResult<()> {
     let cmd = Command::new("git")
         .current_dir(dir)
-        .args(["pull", "gitarch.bundle"])
+        .args(["pull", bundle_path.to_str().unwrap()])
         .output()?;
 
     if cmd.status.success() {

@@ -2,14 +2,15 @@
 use std::{
     fs::{remove_file, write, File},
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     process::exit,
+    str::FromStr,
 };
 
 use cid::Cid;
 use futures::TryStreamExt;
 use invarch::runtime_types::{
-    invarch_primitives::AnyId, invarch_runtime::Call, pallet_ips::pallet::Call as IpsCall,
+    invarch_runtime::Call, pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as IpsCall,
 };
 use ipfs_api::{IpfsApi, IpfsClient};
 use sp_keyring::{sr25519::sr25519::Pair, AccountKeyring::Alice};
@@ -51,18 +52,20 @@ impl GitArch {
         })
     }
 
-    pub async fn list(&self, settings: &Settings) -> BoxResult<String> {
+    pub async fn list(&self, settings: &Settings, path: &str) -> BoxResult<String> {
         let temp_dir = TempDir::new()?;
 
+        std::fs::create_dir_all(path).unwrap();
+
         let ips_id = settings.root.ips_id;
-        Repository::init(temp_dir.path())?;
+        Repository::init(path)?;
 
         let remote_bundle: H256 = {
             let ips_info = self
                 .api
                 .storage()
-                .ips()
-                .ips_storage(&ips_id, None)
+                .inv4()
+                .ip_storage(&ips_id, None)
                 .await?
                 .ok_or(format!("Ips {ips_id} does not exist"))?;
             if let Ok((bundle, _)) = self.find_bundle(ips_info.data.0).await {
@@ -83,21 +86,26 @@ impl GitArch {
 
         let bundle_path = temp_dir.child("gitarch.bundle");
 
+        // let mut file = File::create("./tmpdir/gitarch.bundle")?;
+        // file.write_all(&content)?;
+
         write(&bundle_path, content)?;
-        pull_from_bundle(temp_dir.path())?;
-        let refs = show_ref(temp_dir.path())?.trim().to_string();
+        pull_from_bundle(Path::new(path), &bundle_path)?;
+        let refs = show_ref(Path::new(path))?.trim().to_string();
 
         Ok(refs)
     }
 
     pub async fn fetch(&self, settings: &Settings) -> BoxResult<()> {
+        let temp_dir = TempDir::new()?;
+
         let ips_id = settings.root.ips_id;
 
         let ip_set_info = self
             .api
             .storage()
-            .ips()
-            .ips_storage(&ips_id, None)
+            .inv4()
+            .ip_storage(&ips_id, None)
             .await?
             .ok_or(format!("IPS {} does not exist", ips_id))?;
 
@@ -111,12 +119,20 @@ impl GitArch {
                 .try_concat()
                 .await?;
 
-            let mut file = File::create("gitarch.bundle")?;
-            file.write_all(&content)?;
+            let bundle_path = temp_dir.child("gitarch.bundle");
 
-            pull_from_bundle(Path::new("."))?;
+            write(&bundle_path, content)?;
+            pull_from_bundle(Path::new("."), &bundle_path)?;
 
-            remove_file("gitarch.bundle")?;
+            //    let mut file = File::create("gitarch.bundle")?;
+            //    file.write_all(&content)?;
+
+            //    pull_from_bundle(
+            //        Path::new("."),
+            //         &PathBuf::from_str("gitarch.bundle").unwrap(),
+            //     )?;
+
+            //  remove_file("gitarch.bundle")?;
             exit(0);
         }
         Ok(())
@@ -148,13 +164,13 @@ impl GitArch {
         let ips_info = self
             .api
             .storage()
-            .ips()
-            .ips_storage(&ips_id, None)
+            .inv4()
+            .ip_storage(&ips_id, None)
             .await?
             .ok_or(format!("IPS {ips_id} does not exist"))?;
 
         if let Ok(old_bundle) = self.find_bundle(ips_info.data.0).await {
-            let remove_call = Call::Ips(IpsCall::remove {
+            let remove_call = Call::INV4(IpsCall::remove {
                 ips_id,
                 assets: vec![(old_bundle.1, self.signer_account.clone())],
                 new_metadata: None,
@@ -163,7 +179,7 @@ impl GitArch {
             let transaction = self
                 .api
                 .tx()
-                .ipt()
+                .inv4()
                 .operate_multisig(false, (ips_id, subasset_id), remove_call)?
                 .sign_and_submit_default(&self.signer)
                 .await?;
@@ -172,7 +188,7 @@ impl GitArch {
         }
 
         // Move new bundle file to IPS
-        let append_call = Call::Ips(IpsCall::append {
+        let append_call = Call::INV4(IpsCall::append {
             ips_id,
             assets: vec![AnyId::IpfId(bundle_ipf_id)],
             new_metadata: None,
@@ -181,7 +197,7 @@ impl GitArch {
         let transaction = self
             .api
             .tx()
-            .ipt()
+            .inv4()
             .operate_multisig(true, (ips_id, subasset_id), append_call)?
             .sign_and_submit_default(&self.signer)
             .await?;
@@ -191,7 +207,10 @@ impl GitArch {
         Ok(())
     }
 
-    async fn find_bundle(&self, files: Vec<AnyId<u64, u64>>) -> BoxResult<(H256, AnyId<u64, u64>)> {
+    async fn find_bundle(
+        &self,
+        files: Vec<AnyId<u32, u64, (u32, u32), u32>>,
+    ) -> BoxResult<(H256, AnyId<u32, u64, (u32, u32), u32>)> {
         for file in files {
             if let AnyId::IpfId(id) = file {
                 let ipf_info = self

@@ -2,8 +2,10 @@
 #![allow(clippy::unnecessary_wraps)] // Allowed while TODOs in functions exists
 use std::{
     env::{args, current_dir, var},
+    fmt::format,
     fs::create_dir_all,
     io::stdin,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -35,14 +37,14 @@ async fn main() -> BoxResult<()> {
                 .as_os_str()
                 .to_str()
                 .ok_or("Input was not UTF-8")?
-                .parse::<u64>()?,
+                .parse::<u32>()?,
             if let Some(component) = url.next() {
                 Some(
                     component
                         .as_os_str()
                         .to_str()
                         .ok_or("Input was not UTF-8")?
-                        .parse::<u64>()?,
+                        .parse::<u32>()?,
                 )
             } else {
                 None
@@ -75,13 +77,21 @@ async fn main() -> BoxResult<()> {
             return Ok(());
         }
 
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .create(true) // This is needed to append to file
+            .open("log")
+            .unwrap();
+        file.write_all(&input.clone().into_bytes()).unwrap();
+
         let mut args = input.split_ascii_whitespace();
 
         match (args.next(), args.next(), args.next()) {
             (Some("push"), Some(ref_arg), None) => push(&client, &settings, ref_arg).await,
             (Some("fetch"), Some(sha), Some(name)) => fetch(&client, &settings, sha, name).await,
             (Some("capabilities"), None, None) => capabilities(),
-            (Some("list"), _, None) => list(&client, &settings).await,
+            (Some("list"), Some(path), None) => list(&client, &settings, &path).await,
             (None, None, None) => Ok(()),
             _ => {
                 println!("unknown command\n");
@@ -132,8 +142,8 @@ fn capabilities() -> BoxResult<()> {
     Ok(())
 }
 
-async fn list(client: &GitArch, settings: &Settings) -> BoxResult<()> {
-    println!("{}", client.list(settings).await?);
+async fn list(client: &GitArch, settings: &Settings, path: &str) -> BoxResult<()> {
+    println!("{}", client.list(settings, path).await?);
     println!();
     Ok(())
 }
