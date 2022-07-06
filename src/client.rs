@@ -8,6 +8,7 @@ use std::{
 };
 
 use cid::Cid;
+use codec::{Decode, Encode};
 use futures::TryStreamExt;
 use invarch::runtime_types::{
     invarch_runtime::Call, pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as IpsCall,
@@ -24,8 +25,8 @@ use temp_dir::TempDir;
 
 use crate::{
     error,
-    primitives::{BoxResult, Settings},
-    util::{create_bundle, generate_cid, pull_from_bundle, show_ref},
+    primitives::{BoxResult, RefsFile, Settings},
+    util::{create_bundle_all, create_bundle_target_ref, generate_cid, pull_from_bundle, show_ref},
 };
 
 #[subxt(runtime_metadata_path = "invarch_metadata.scale")]
@@ -68,7 +69,7 @@ impl GitArch {
                 .ip_storage(&ips_id, None)
                 .await?
                 .ok_or(format!("Ips {ips_id} does not exist"))?;
-            if let Ok((bundle, _)) = self.find_bundle(ips_info.data.0).await {
+            if let Ok((bundle, _)) = self.find_refs_file(ips_info.data.0).await {
                 bundle
             } else {
                 return Ok(String::default());
@@ -84,7 +85,7 @@ impl GitArch {
             .try_concat()
             .await?;
 
-        let bundle_path = temp_dir.child("gitarch.bundle");
+        let bundle_path = temp_dir.child("inv4.bundle");
 
         // let mut file = File::create("./tmpdir/gitarch.bundle")?;
         // file.write_all(&content)?;
@@ -109,7 +110,7 @@ impl GitArch {
             .await?
             .ok_or(format!("IPS {} does not exist", ips_id))?;
 
-        if let Ok(remote_bundle) = self.find_bundle(ip_set_info.data.0).await {
+        if let Ok(remote_bundle) = self.find_refs_file(ip_set_info.data.0).await {
             let cid = generate_cid(remote_bundle.0)?.to_string();
 
             let content = self
@@ -119,7 +120,7 @@ impl GitArch {
                 .try_concat()
                 .await?;
 
-            let bundle_path = temp_dir.child("gitarch.bundle");
+            let bundle_path = temp_dir.child("inv4.bundle");
 
             write(&bundle_path, content)?;
             pull_from_bundle(Path::new("."), &bundle_path)?;
@@ -140,28 +141,9 @@ impl GitArch {
 
     pub async fn push(&self, settings: &Settings) -> BoxResult<()> {
         let ips_id = settings.root.ips_id;
-        let subasset_id = settings.root.subasset_id;
-        // Predict next IPF_ID
-        let bundle_ipf_id: u64 = self.api.storage().ipf().next_ipf_id(None).await?;
 
-        create_bundle(Path::new("gitarch.bundle"))?;
-        let file = File::open("gitarch.bundle")?;
-
-        // Send file to IPFS
-        let cid = &Cid::try_from(self.ipfs_client.add(file).await?.hash)?.to_bytes()[2..];
-
-        let transaction = self
-            .api
-            .tx()
-            .ipf()
-            .mint(b"gitarch.bundle".to_vec(), H256::from_slice(cid))?
-            .sign_and_submit_default(&self.signer)
-            .await?;
-
-        eprintln!("Submitted IPF Mint for file \"gitarch.bundle\": {transaction:?}");
-
-        // Remove old bundle from IPS
-        let ips_info = self
+        // First let's find out which references, if any, we already have on chain.
+        let ips = self
             .api
             .storage()
             .inv4()
@@ -169,28 +151,96 @@ impl GitArch {
             .await?
             .ok_or(format!("IPS {ips_id} does not exist"))?;
 
-        if let Ok(old_bundle) = self.find_bundle(ips_info.data.0).await {
-            let remove_call = Call::INV4(IpsCall::remove {
-                ips_id,
-                assets: vec![(old_bundle.1, self.signer_account.clone())],
-                new_metadata: None,
-            });
+        let repo = Repository::open("./").unwrap();
 
-            let transaction = self
-                .api
-                .tx()
-                .inv4()
-                .operate_multisig(false, (ips_id, subasset_id), remove_call)?
-                .sign_and_submit_default(&self.signer)
+        let local_refs = RefsFile::from_reference_names(repo.references().unwrap().names(), &repo);
+
+        if let Ok(refs_file) = self.find_refs_file(ips.data.0).await {
+            let cid = generate_cid(refs_file.0)?.to_string();
+
+            let content = self
+                .ipfs_client
+                .cat(&cid)
+                .map_ok(|c| c.to_vec())
+                .try_concat()
                 .await?;
 
-            eprintln!("Submitted IPS remove: {transaction:?}");
+            let remote_refs = RefsFile::decode(&mut content.as_slice()).unwrap();
+
+            let latest_ref_from_remote = remote_refs.get_latest_ref();
+
+            if latest_ref_from_remote == local_refs.get_latest_ref() {
+                panic!("remote and local already in sync");
+            } else {
+                create_bundle_target_ref(Path::new("inv4.bundle"), latest_ref_from_remote.clone())
+                    .unwrap();
+
+                let remove_call = Call::INV4(IpsCall::remove {
+                    ips_id,
+                    assets: vec![(refs_file.1, self.signer_account.clone())],
+                    new_metadata: None,
+                });
+
+                let transaction = self
+                    .api
+                    .tx()
+                    .inv4()
+                    .operate_multisig(false, (ips_id, settings.root.subasset_id), remove_call)?
+                    .sign_and_submit_default(&self.signer)
+                    .await?;
+
+                eprintln!("Submitted IPS remove: {transaction:?}");
+            }
+        } else {
+            create_bundle_all(Path::new("inv4.bundle")).unwrap();
         }
 
-        // Move new bundle file to IPS
+        let bundle_file = File::open("inv4.bundle")?;
+
+        let mut new_refs_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true) // This is needed to append to file
+            .open("refs")
+            .unwrap();
+
+        new_refs_file
+            .write_all(local_refs.encode().as_slice())
+            .unwrap();
+
+        // Send file to IPFS
+        let bundle_cid =
+            &Cid::try_from(self.ipfs_client.add(bundle_file).await?.hash)?.to_bytes()[2..];
+        let refs_cid =
+            &Cid::try_from(self.ipfs_client.add(new_refs_file).await?.hash)?.to_bytes()[2..];
+
+        let refs_ipf_id: u64 = self.api.storage().ipf().next_ipf_id(None).await?;
+        let transaction = self
+            .api
+            .tx()
+            .ipf()
+            .mint(b"refs".to_vec(), H256::from_slice(refs_cid))?
+            .sign_and_submit_default(&self.signer)
+            .await?;
+
+        eprintln!("Submitted IPF Mint for file \"refs\": {transaction:?}");
+
+        let bundle_ipf_id: u64 = self.api.storage().ipf().next_ipf_id(None).await?;
+        let transaction = self
+            .api
+            .tx()
+            .ipf()
+            .mint(
+                local_refs.get_latest_ref().into_bytes(),
+                H256::from_slice(bundle_cid),
+            )?
+            .sign_and_submit_default(&self.signer)
+            .await?;
+
+        eprintln!("Submitted IPF Mint for file \"bundle\": {transaction:?}");
+
         let append_call = Call::INV4(IpsCall::append {
             ips_id,
-            assets: vec![AnyId::IpfId(bundle_ipf_id)],
+            assets: vec![AnyId::IpfId(refs_ipf_id), AnyId::IpfId(bundle_ipf_id)],
             new_metadata: None,
         });
 
@@ -198,7 +248,7 @@ impl GitArch {
             .api
             .tx()
             .inv4()
-            .operate_multisig(true, (ips_id, subasset_id), append_call)?
+            .operate_multisig(true, (ips_id, settings.root.subasset_id), append_call)?
             .sign_and_submit_default(&self.signer)
             .await?;
 
@@ -207,7 +257,7 @@ impl GitArch {
         Ok(())
     }
 
-    async fn find_bundle(
+    async fn find_refs_file(
         &self,
         files: Vec<AnyId<u32, u64, (u32, u32), u32>>,
     ) -> BoxResult<(H256, AnyId<u32, u64, (u32, u32), u32>)> {
@@ -220,7 +270,7 @@ impl GitArch {
                     .ipf_storage(&id, None)
                     .await?
                     .ok_or("Internal error: IPF listed from IPS does not exist")?;
-                if String::from_utf8(ipf_info.metadata.0.clone())? == *"gitarch.bundle" {
+                if String::from_utf8(ipf_info.metadata.0.clone())? == *"refs" {
                     return Ok((ipf_info.data, file));
                 }
             }

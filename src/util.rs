@@ -14,13 +14,30 @@ macro_rules! error {
     }};
 }
 
-pub fn create_bundle(bundle: &Path) -> BoxResult<()> {
+pub fn create_bundle_all(bundle: &Path) -> BoxResult<()> {
     let cmd = Command::new("git")
         .args([
             "bundle",
             "create",
             bundle.to_str().ok_or("Invalid bundle path")?,
             "--all",
+        ])
+        .output()?;
+    if cmd.status.success() {
+        Ok(())
+    } else {
+        Err("Git bundle failed".into())
+    }
+}
+
+pub fn create_bundle_target_ref(bundle: &Path, latest_from_remote: String) -> BoxResult<()> {
+    let cmd = Command::new("git")
+        .args([
+            "bundle",
+            "create",
+            bundle.to_str().ok_or("Invalid bundle path")?,
+            "master",
+            format!("^{}", latest_from_remote).as_str(),
         ])
         .output()?;
     if cmd.status.success() {

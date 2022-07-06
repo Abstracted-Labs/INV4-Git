@@ -33,7 +33,7 @@ async fn main() -> BoxResult<()> {
         url.next();
         (
             url.next()
-                .ok_or("Missing IPS id. Expected: 'gitarch://>ips_id<'")?
+                .ok_or("Missing IPS id. Expected: 'inv4://>ips_id<'")?
                 .as_os_str()
                 .to_str()
                 .ok_or("Input was not UTF-8")?
@@ -56,7 +56,7 @@ async fn main() -> BoxResult<()> {
     create_dir_all(
         current_dir()?
             .join(&git_dir)
-            .join("remote-gitarch")
+            .join("remote-inv4")
             .join(&alias),
     )?;
 
@@ -83,6 +83,10 @@ async fn main() -> BoxResult<()> {
             .create(true) // This is needed to append to file
             .open("log")
             .unwrap();
+
+        file.write_all(format!("git_dir: {:?}", settings.git_dir).as_bytes())
+            .unwrap();
+
         file.write_all(&input.clone().into_bytes()).unwrap();
 
         let mut args = input.split_ascii_whitespace();
