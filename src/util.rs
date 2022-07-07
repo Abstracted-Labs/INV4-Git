@@ -1,5 +1,6 @@
 use cid::{multihash::MultihashGeneric, CidGeneric};
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -77,4 +78,15 @@ pub fn generate_cid(hash: H256) -> BoxResult<CidGeneric<32>> {
     Ok(CidGeneric::new_v0(MultihashGeneric::<32>::from_bytes(
         hex::decode(format!("{:?}", hash).replace("0x", "1220"))?.as_slice(),
     )?)?)
+}
+
+pub fn log(what: &str) {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true) // This is needed to append to file
+        .open("log")
+        .unwrap();
+
+    file.write_all(format!("{}\n", what).as_bytes()).unwrap();
 }

@@ -18,7 +18,7 @@ features = ["macros", "rt-multi-thread"]
 
 [dependencies.subxt]
 git = "https://github.com/paritytech/subxt"
-branch = "master"
+rev = "c55b7ba3e34118f61dc51499a0b38262c513aec4"
 
 [dependencies.codec]
 package = "parity-scale-codec"

@@ -26,7 +26,9 @@ use temp_dir::TempDir;
 use crate::{
     error,
     primitives::{BoxResult, RefsFile, Settings},
-    util::{create_bundle_all, create_bundle_target_ref, generate_cid, pull_from_bundle, show_ref},
+    util::{
+        create_bundle_all, create_bundle_target_ref, generate_cid, log, pull_from_bundle, show_ref,
+    },
 };
 
 #[subxt(runtime_metadata_path = "invarch_metadata.scale")]
@@ -61,37 +63,60 @@ impl GitArch {
         let ips_id = settings.root.ips_id;
         Repository::init(path)?;
 
-        let remote_bundle: H256 = {
-            let ips_info = self
-                .api
-                .storage()
-                .inv4()
-                .ip_storage(&ips_id, None)
-                .await?
-                .ok_or(format!("Ips {ips_id} does not exist"))?;
-            if let Ok((bundle, _)) = self.find_refs_file(ips_info.data.0).await {
-                bundle
-            } else {
-                return Ok(String::default());
+        let ips_info = self
+            .api
+            .storage()
+            .inv4()
+            .ip_storage(&ips_id, None)
+            .await?
+            .ok_or(format!("Ips {ips_id} does not exist"))?;
+
+        let ips_data = ips_info.data.0;
+
+        if let Ok((refs_hash, _)) = self.find_refs_file(&ips_data).await {
+            let refs_cid = generate_cid(refs_hash)?.to_string();
+            let refs_content = self
+                .ipfs_client
+                .cat(&refs_cid)
+                .map_ok(|c| c.to_vec())
+                .try_concat()
+                .await?;
+
+            let refs = RefsFile::decode(&mut refs_content.as_slice()).unwrap();
+
+            for anyid in &ips_data {
+                if let AnyId::IpfId(ipf_id) = anyid {
+                    let ipf_info = self
+                        .api
+                        .storage()
+                        .ipf()
+                        .ipf_storage(&ipf_id, None)
+                        .await?
+                        .ok_or("Internal error: IPF listed from IPS does not exist")?;
+
+                    if refs
+                        .refs
+                        .contains(&String::from_utf8(ipf_info.metadata.0.clone()).unwrap())
+                    {
+                        let content = self
+                            .ipfs_client
+                            .cat(&generate_cid(ipf_info.data)?.to_string())
+                            .map_ok(|c| c.to_vec())
+                            .try_concat()
+                            .await?;
+
+                        let bundle_path =
+                            temp_dir.child(&String::from_utf8(ipf_info.metadata.0).unwrap());
+
+                        write(&bundle_path, content)?;
+
+                        pull_from_bundle(Path::new(path), &bundle_path).unwrap();
+                    }
+                }
             }
+        } else {
+            return Ok(String::default());
         };
-
-        let cid = generate_cid(remote_bundle)?.to_string();
-
-        let content = self
-            .ipfs_client
-            .cat(&cid)
-            .map_ok(|c| c.to_vec())
-            .try_concat()
-            .await?;
-
-        let bundle_path = temp_dir.child("inv4.bundle");
-
-        // let mut file = File::create("./tmpdir/gitarch.bundle")?;
-        // file.write_all(&content)?;
-
-        write(&bundle_path, content)?;
-        pull_from_bundle(Path::new(path), &bundle_path)?;
         let refs = show_ref(Path::new(path))?.trim().to_string();
 
         Ok(refs)
@@ -110,7 +135,7 @@ impl GitArch {
             .await?
             .ok_or(format!("IPS {} does not exist", ips_id))?;
 
-        if let Ok(remote_bundle) = self.find_refs_file(ip_set_info.data.0).await {
+        if let Ok(remote_bundle) = self.find_refs_file(&ip_set_info.data.0).await {
             let cid = generate_cid(remote_bundle.0)?.to_string();
 
             let content = self
@@ -155,7 +180,7 @@ impl GitArch {
 
         let local_refs = RefsFile::from_reference_names(repo.references().unwrap().names(), &repo);
 
-        if let Ok(refs_file) = self.find_refs_file(ips.data.0).await {
+        if let Ok(refs_file) = self.find_refs_file_owned(ips.data.0).await {
             let cid = generate_cid(refs_file.0)?.to_string();
 
             let content = self
@@ -195,6 +220,8 @@ impl GitArch {
             create_bundle_all(Path::new("inv4.bundle")).unwrap();
         }
 
+        eprintln!("past create bundle section");
+
         let bundle_file = File::open("inv4.bundle")?;
 
         let mut new_refs_file = std::fs::OpenOptions::new()
@@ -211,7 +238,9 @@ impl GitArch {
         let bundle_cid =
             &Cid::try_from(self.ipfs_client.add(bundle_file).await?.hash)?.to_bytes()[2..];
         let refs_cid =
-            &Cid::try_from(self.ipfs_client.add(new_refs_file).await?.hash)?.to_bytes()[2..];
+            &Cid::try_from(self.ipfs_client.add(File::open("refs")?).await?.hash)?.to_bytes()[2..];
+
+        eprintln!("got cids");
 
         let refs_ipf_id: u64 = self.api.storage().ipf().next_ipf_id(None).await?;
         let transaction = self
@@ -240,7 +269,7 @@ impl GitArch {
 
         let append_call = Call::INV4(IpsCall::append {
             ips_id,
-            assets: vec![AnyId::IpfId(refs_ipf_id), AnyId::IpfId(bundle_ipf_id)],
+            assets: vec![AnyId::IpfId(refs_ipf_id), AnyId::IpfId(refs_ipf_id + 1)],
             new_metadata: None,
         });
 
@@ -257,7 +286,28 @@ impl GitArch {
         Ok(())
     }
 
-    async fn find_refs_file(
+    async fn find_refs_file<'a>(
+        &self,
+        files: &'a Vec<AnyId<u32, u64, (u32, u32), u32>>,
+    ) -> BoxResult<(H256, &'a AnyId<u32, u64, (u32, u32), u32>)> {
+        for file in files {
+            if let AnyId::IpfId(id) = file {
+                let ipf_info = self
+                    .api
+                    .storage()
+                    .ipf()
+                    .ipf_storage(&id, None)
+                    .await?
+                    .ok_or("Internal error: IPF listed from IPS does not exist")?;
+                if String::from_utf8(ipf_info.metadata.0.clone())? == *"refs" {
+                    return Ok((ipf_info.data, file));
+                }
+            }
+        }
+        error!("bundle not found")
+    }
+
+    async fn find_refs_file_owned(
         &self,
         files: Vec<AnyId<u32, u64, (u32, u32), u32>>,
     ) -> BoxResult<(H256, AnyId<u32, u64, (u32, u32), u32>)> {

@@ -77,17 +77,7 @@ async fn main() -> BoxResult<()> {
             return Ok(());
         }
 
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .append(true)
-            .create(true) // This is needed to append to file
-            .open("log")
-            .unwrap();
-
-        file.write_all(format!("git_dir: {:?}", settings.git_dir).as_bytes())
-            .unwrap();
-
-        file.write_all(&input.clone().into_bytes()).unwrap();
+        eprintln!("{}", &input.clone());
 
         let mut args = input.split_ascii_whitespace();
 
