@@ -79,14 +79,3 @@ pub fn generate_cid(hash: H256) -> BoxResult<CidGeneric<32>> {
         hex::decode(format!("{:?}", hash).replace("0x", "1220"))?.as_slice(),
     )?)?)
 }
-
-pub fn log(what: &str) {
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .append(true)
-        .create(true) // This is needed to append to file
-        .open("log")
-        .unwrap();
-
-    file.write_all(format!("{}\n", what).as_bytes()).unwrap();
-}
