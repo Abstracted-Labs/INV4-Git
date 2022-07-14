@@ -1,44 +1,23 @@
 use crate::{
-    client::invarch::{self, runtime_types::pallet_inv4::pallet::AnyId},
     error,
+    invarch::{self, runtime_types::pallet_inv4::pallet::AnyId},
     util::generate_cid,
 };
 use cid::Cid;
 use codec::{Decode, Encode};
 use futures::TryStreamExt;
-use git2::{Blob, Commit, Object, ObjectType, Odb, Oid, ReferenceNames, Repository, Tag, Tree};
+use git2::{Blob, Commit, Object, ObjectType, Odb, Oid, Repository, Tag, Tree};
 use ipfs_api::{IpfsApi, IpfsClient};
-use sp_keyring::{sr25519::sr25519::Pair, AccountKeyring::Alice};
+use log::debug;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     error::Error,
     io::Cursor,
-    path::PathBuf,
-    time::Instant,
 };
 use subxt::{sp_core::H256, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
 
 /// A magic value used to signal that a hash is a submodule tip (to be obtained by git on its own).
 pub static SUBMODULE_TIP_MARKER: &str = "submodule-tip";
-
-#[derive(Encode, Decode, Debug, PartialEq)]
-pub enum IpfIdOrSubmoduleTip {
-    IpfId(u64),
-    SubmoduleTipMarker,
-}
-
-#[derive(Debug)]
-pub struct Settings {
-    pub git_dir: PathBuf,
-    pub remote_alias: String,
-    pub root: Key,
-}
-
-#[derive(Debug)]
-pub struct Key {
-    pub ips_id: u32,
-    pub subasset_id: Option<u32>,
-}
 
 pub type BoxResult<T> = Result<T, Box<dyn Error>>;
 
@@ -79,14 +58,14 @@ impl GitObject {
         chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         ips_id: u32,
     ) -> Result<Self, Box<dyn Error>> {
-        let ips = chain_api
+        let ips_info = chain_api
             .storage()
             .inv4()
             .ip_storage(&ips_id, None)
             .await?
             .ok_or(format!("IPS {ips_id} does not exist"))?;
 
-        for file in ips.data.0 {
+        for file in ips_info.data.0 {
             if let AnyId::IpfId(id) = file {
                 let ipf_info = chain_api
                     .storage()
@@ -109,13 +88,8 @@ impl GitObject {
         error!("git_hash ipf not found")
     }
 
-    pub fn from_git_blob(
-        blob: &Blob,
-        odb: &Odb,
-        ipfs: &mut IpfsClient,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn from_git_blob(blob: &Blob, odb: &Odb) -> Result<Self, Box<dyn Error>> {
         let odb_obj = odb.read(blob.id())?;
-        //   let raw_data_ipfs_hash = Self::upload_odb_obj(&odb_obj, ipfs).await?;
 
         Ok(Self {
             git_hash: blob.id().to_string(),
@@ -124,13 +98,9 @@ impl GitObject {
         })
     }
 
-    pub fn from_git_commit(
-        commit: &Commit,
-        odb: &Odb,
-        ipfs: &mut IpfsClient,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn from_git_commit(commit: &Commit, odb: &Odb) -> Result<Self, Box<dyn Error>> {
         let odb_obj = odb.read(commit.id())?;
-        //  let raw_data_ipfs_hash = Self::upload_odb_obj(&odb_obj, ipfs).await?;
+
         let parent_git_hashes: BTreeSet<String> = commit
             .parent_ids()
             .map(|parent_id| format!("{}", parent_id))
@@ -148,13 +118,8 @@ impl GitObject {
         })
     }
 
-    pub fn from_git_tag(
-        tag: &Tag,
-        odb: &Odb,
-        ipfs: &mut IpfsClient,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn from_git_tag(tag: &Tag, odb: &Odb) -> Result<Self, Box<dyn Error>> {
         let odb_obj = odb.read(tag.id())?;
-        //   let raw_data_ipfs_hash = Self::upload_odb_obj(&odb_obj, ipfs).await?;
 
         Ok(Self {
             git_hash: tag.id().to_string(),
@@ -165,13 +130,8 @@ impl GitObject {
         })
     }
 
-    pub fn from_git_tree(
-        tree: &Tree,
-        odb: &Odb,
-        ipfs: &mut IpfsClient,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn from_git_tree(tree: &Tree, odb: &Odb) -> Result<Self, Box<dyn Error>> {
         let odb_obj = odb.read(tree.id())?;
-        //  let raw_data_ipfs_hash = Self::upload_odb_obj(&odb_obj, ipfs).await?;
 
         let entry_git_hashes: BTreeSet<String> =
             tree.iter().map(|entry| format!("{}", entry.id())).collect();
@@ -188,14 +148,15 @@ impl GitObject {
         &self,
         ipfs: &mut IpfsClient,
         chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
     ) -> Result<(String, u64), Box<dyn Error>> {
         let git_hash = self.git_hash.clone();
 
-        eprintln!("Let's push data to IPFS!");
+        debug!("Pushing object to IPFS");
         let ipfs_hash =
             &Cid::try_from(ipfs.add(Cursor::new(self.encode())).await?.hash)?.to_bytes()[2..];
 
-        eprintln!("Let's send data to the chain!");
+        debug!("Sending object to the chain");
         let events = chain_api
             .tx()
             .ipf()
@@ -203,17 +164,13 @@ impl GitObject {
                 self.git_hash.as_bytes().to_vec(),
                 H256::from_slice(ipfs_hash),
             )?
-            .sign_and_submit_then_watch_default(&PairSigner::<DefaultConfig, Pair>::new(
-                Alice.pair(),
-            ))
+            .sign_and_submit_then_watch_default(signer)
             .await?
             .wait_for_finalized_success()
             .await?;
 
-        eprintln!("Let's find the event!");
-
         let ipf_id = events
-            .find_first::<crate::client::invarch::ipf::events::Minted>()?
+            .find_first::<invarch::ipf::events::Minted>()?
             .unwrap()
             .1;
 
@@ -225,12 +182,8 @@ impl GitObject {
 pub struct RepoData {
     /// All refs this repository knows; a {name -> sha1} mapping
     pub refs: BTreeMap<String, String>,
-    /// All objects this repository contains; a {sha1 -> IPF ID} map
-    // pub objects: BTreeMap<String, IpfIdOrSubmoduleTip>,
     /// All objects this repository contains; a {sha1} vec
     pub objects: Vec<String>,
-    //    /// The IPFS hash of the previous index
-    //pub prev_idx_hash: Option<String>,
 }
 
 impl RepoData {
@@ -245,9 +198,6 @@ impl RepoData {
         Ok(Self::decode(&mut refs_content.as_slice())?)
     }
 
-    /// Figure out what git hash `ref_src` points to in `repo` and add it to the index as
-    /// `ref_dst`. If `ref_src` is an empty string, `ref_dst` is deleted from the index (only the
-    /// ref, the objects aren't touched).
     pub async fn push_ref_from_str(
         &mut self,
         ref_src: &str,
@@ -256,17 +206,18 @@ impl RepoData {
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
         chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
     ) -> Result<Vec<u64>, Box<dyn Error>> {
         // Deleting `ref_dst` was requested
-        if ref_src == "" {
-            eprintln!("Removing ref {} from index", ref_dst);
+        if ref_src.is_empty() {
+            debug!("Removing ref {} from index", ref_dst);
             if self.refs.remove(ref_dst).is_none() {
-                eprintln!(
+                debug!(
                     "Nothing to delete, ref {} not part of the index ref set",
                     ref_dst
                 );
-                eprintln!("Available refs:\n{:#?}", self.refs);
+                debug!("Available refs:\n{:#?}", self.refs);
             }
             return Ok(vec![]);
         }
@@ -277,7 +228,7 @@ impl RepoData {
             .peel(ObjectType::Tag)
             .unwrap_or(reference.peel(ObjectType::Commit)?);
 
-        eprintln!(
+        debug!(
             "{:?} dereferenced to {:?} {}",
             reference.shorthand(),
             obj.kind(),
@@ -308,7 +259,7 @@ impl RepoData {
                         ref_dst
                         );
 
-                    eprintln!("Missing objects:\n{:#?}", missing_objects);
+                    debug!("Missing objects:\n{:#?}", missing_objects);
                     return Err("There's objects in the index not present in the local repo - a pull is needed".into());
                 }
             }
@@ -317,44 +268,20 @@ impl RepoData {
         let mut objs_for_push = HashSet::new();
         let mut submodules_for_push = HashSet::new();
 
-        let start = Instant::now();
         self.enumerate_for_push(
             &obj.clone(),
             &mut objs_for_push,
             &mut submodules_for_push,
             repo,
         )?;
-        let dur = start.elapsed();
-
-        eprintln!(
-            "Counting objects took {}.{}s",
-            dur.as_secs(),
-            dur.subsec_micros()
-        );
-
-        eprintln!(
-            "Counted {} object(s) for push (took {}.{}):\n{:#?}",
-            dur.as_secs(),
-            dur.subsec_micros(),
-            objs_for_push.len(),
-            objs_for_push
-        );
-        eprintln!(
-            "Counted {} submodule stub(s) for push:\n{:#?}",
-            submodules_for_push.len(),
-            submodules_for_push
-        );
 
         let ipf_id_list = self
-            .push_git_objects(&objs_for_push, repo, ipfs, chain_api)
+            .push_git_objects(&objs_for_push, repo, ipfs, chain_api, signer)
             .await?;
 
         // Add all submodule tips to the index
-        for submod_oid in submodules_for_push {
-            self.objects.push(
-                //                submod_oid.to_string(),
-                SUBMODULE_TIP_MARKER.to_string(),
-            );
+        for _ in submodules_for_push {
+            self.objects.push(SUBMODULE_TIP_MARKER.to_string());
         }
 
         self.refs
@@ -362,8 +289,6 @@ impl RepoData {
         Ok(ipf_id_list)
     }
 
-    /// Iteratively fill two hash sets: `obj`'s children present in `repo` but missing from `self`
-    /// (`push_todo`), and `obj`'s children recognized as submodule tips. (`submodules`).
     pub fn enumerate_for_push(
         &self,
         obj: &Object,
@@ -377,18 +302,18 @@ impl RepoData {
         let mut obj_cnt = 1;
         while let Some(obj) = stack.pop() {
             if self.objects.contains(&obj.id().to_string()) {
-                eprintln!("Object {} already in RepoData", obj.id());
+                debug!("Object {} already in RepoData", obj.id());
                 continue;
             }
 
             if push_todo.contains(&obj.id()) {
-                eprintln!("Object {} already in state", obj.id());
+                debug!("Object {} already in state", obj.id());
                 continue;
             }
 
             let obj_type = obj.kind().ok_or_else(|| {
                 let msg = format!("Cannot determine type of object {}", obj.id());
-                eprintln!("{}", msg);
+                debug!("{}", msg);
                 msg
             })?;
 
@@ -400,15 +325,15 @@ impl RepoData {
                         .as_commit()
                         .ok_or_else(|| eprintln!("Could not view {:?} as a commit", obj))
                         .unwrap();
-                    eprintln!("[{}] Counting commit {:?}", obj_cnt, commit);
+                    debug!("[{}] Counting commit {:?}", obj_cnt, commit);
 
                     let tree_obj = obj.peel(ObjectType::Tree)?;
-                    eprintln!("Commit {}: Handling tree {}", commit.id(), tree_obj.id());
+                    debug!("Commit {}: Handling tree {}", commit.id(), tree_obj.id());
 
                     stack.push(tree_obj);
 
                     for parent in commit.parents() {
-                        eprintln!(
+                        debug!(
                             "Commit {}: Pushing parent commit {}",
                             commit.id(),
                             parent.id()
@@ -421,26 +346,26 @@ impl RepoData {
                         .as_tree()
                         .ok_or_else(|| eprintln!("Could not view {:?} as a tree", obj))
                         .unwrap();
-                    eprintln!("[{}] Counting tree {:?}", obj_cnt, tree);
+                    debug!("[{}] Counting tree {:?}", obj_cnt, tree);
 
                     for entry in tree.into_iter() {
                         // Weed out submodules (Implicitly known as commit children of tree objects)
                         if let Some(ObjectType::Commit) = entry.kind() {
-                            eprintln!("Skipping submodule at {}", entry.id());
+                            debug!("Skipping submodule at {}", entry.id());
 
                             submodules.insert(entry.id());
 
                             continue;
                         }
 
-                        eprintln!(
+                        debug!(
                             "Tree {}: Pushing tree entry {} ({:?})",
                             tree.id(),
                             entry.id(),
                             entry.kind()
                         );
 
-                        stack.push(entry.to_object(&repo)?);
+                        stack.push(entry.to_object(repo)?);
                     }
                 }
                 ObjectType::Blob => {
@@ -448,14 +373,14 @@ impl RepoData {
                         .as_blob()
                         .ok_or_else(|| eprintln!("Could not view {:?} as a blob", obj))
                         .unwrap();
-                    eprintln!("[{}] Counting blob {:?}", obj_cnt, blob);
+                    debug!("[{}] Counting blob {:?}", obj_cnt, blob);
                 }
                 ObjectType::Tag => {
                     let tag = obj
                         .as_tag()
                         .ok_or_else(|| eprintln!("Could not view {:?} as a tag", obj))
                         .unwrap();
-                    eprintln!("[{}] Counting tag {:?}", obj_cnt, tag);
+                    debug!("[{}] Counting tag {:?}", obj_cnt, tag);
 
                     stack.push(tag.target()?);
                 }
@@ -478,12 +403,11 @@ impl RepoData {
         chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
-        eprintln!("Fetching {} for {}", git_hash, ref_name);
+        debug!("Fetching {} for {}", git_hash, ref_name);
 
         let git_hash_oid = Oid::from_str(git_hash)?;
         let mut oids_for_fetch = HashSet::new();
 
-        let start = Instant::now();
         self.enumerate_for_fetch(
             git_hash_oid,
             &mut oids_for_fetch,
@@ -493,44 +417,32 @@ impl RepoData {
             ips_id,
         )
         .await?;
-        let dur = start.elapsed();
-        eprintln!(
-            "Counting objects took {}.{}s",
-            dur.as_secs(),
-            dur.subsec_micros()
-        );
-        eprintln!(
-            "Counted {} object(s) for fetch:\n{:#?}",
-            oids_for_fetch.len(),
-            oids_for_fetch
-        );
 
         self.fetch_git_objects(&oids_for_fetch, repo, ipfs, chain_api, ips_id)
             .await?;
 
         match repo.odb()?.read_header(git_hash_oid)?.1 {
             ObjectType::Commit if ref_name.starts_with("refs/tags") => {
-                eprintln!("Not setting ref for lightweight tag {}", ref_name);
+                debug!("Not setting ref for lightweight tag {}", ref_name);
             }
             ObjectType::Commit => {
                 repo.reference(ref_name, git_hash_oid, true, "inv4-git fetch")?;
             }
             // Somehow git is upset when we set tag refs for it
             ObjectType::Tag => {
-                eprintln!("Not setting ref for tag {}", ref_name);
+                debug!("Not setting ref for tag {}", ref_name);
             }
             other_type => {
                 let msg = format!("New tip turned out to be a {} after fetch", other_type);
-                eprintln!("{}", msg);
+                debug!("{}", msg);
                 return Err(msg.into());
             }
         }
 
-        eprintln!("Fetched {} for {} OK.", git_hash, ref_name);
+        debug!("Fetched {} for {} OK.", git_hash, ref_name);
         Ok(())
     }
 
-    /// Fill a hash set with `oid`'s children that are present in `self` but missing in `repo`.
     pub async fn enumerate_for_fetch(
         &self,
         oid: Oid,
@@ -541,16 +453,15 @@ impl RepoData {
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         let mut stack = vec![oid];
-        let mut obj_cnt = 1;
 
         while let Some(oid) = stack.pop() {
             if repo.odb()?.read_header(oid).is_ok() {
-                eprintln!("Object {} already present locally!", oid);
+                debug!("Object {} already present locally!", oid);
                 continue;
             }
 
             if fetch_todo.contains(&oid) {
-                eprintln!("Object {} already present in state!", oid);
+                debug!("Object {} already present in state!", oid);
                 continue;
             }
 
@@ -560,13 +471,13 @@ impl RepoData {
                 .find(|s| *s == &format!("{}", oid))
                 .ok_or_else(|| {
                     let msg = format!("Could not find object {} in the index", oid);
-                    eprintln!("{}", msg);
+                    debug!("{}", msg);
                     msg
                 })?
                 .clone();
 
             if obj_git_hash == SUBMODULE_TIP_MARKER {
-                eprintln!("Ommitting submodule {}", oid.to_string());
+                debug!("Ommitting submodule {}", oid.to_string());
                 return Ok(());
             }
 
@@ -596,36 +507,37 @@ impl RepoData {
                 }
                 GitObjectMetadata::Blob => {}
             }
-            obj_cnt += 1;
         }
 
         Ok(())
     }
 
-    /// Take `oids` and upload underlying `repo` git objects to IPFS. for `submodules` the
-    /// `SUBMODULE_TIP_MARKER` is inserted.
     pub async fn push_git_objects(
         &mut self,
         oids: &HashSet<Oid>,
         repo: &Repository,
         ipfs: &mut IpfsClient,
         chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
     ) -> Result<Vec<u64>, Box<dyn Error>> {
         let mut ipf_id_list = vec![];
 
         let oid_count = oids.len();
+
+        eprintln!("Minting {} IPFs", oid_count);
+
         for (i, oid) in oids.iter().enumerate() {
             let obj = repo.find_object(*oid, None)?;
-            eprintln!("Current object: {:?} at {}", obj.kind(), obj.id());
+            debug!("Current object: {:?} at {}", obj.kind(), obj.id());
 
             if self.objects.contains(&obj.id().to_string()) {
-                eprintln!("push_objects: Object {} already in RepoData", obj.id());
+                debug!("push_objects: Object {} already in RepoData", obj.id());
                 continue;
             }
 
             let obj_type = obj.kind().ok_or_else(|| {
                 let msg = format!("Cannot determine type of object {}", obj.id());
-                eprintln!("{}", msg);
+                debug_assert_eq!("{}", msg);
                 msg
             })?;
 
@@ -635,19 +547,22 @@ impl RepoData {
                         .as_commit()
                         .ok_or_else(|| eprintln!("Could not view {:?} as a commit", obj))
                         .unwrap();
-                    eprintln!("Pushing commit {:?}", commit);
+                    debug!("Pushing commit {:?}", commit);
 
                     let (git_object_hash, minted_ipf_id) =
-                        GitObject::from_git_commit(&commit, &repo.odb()?, ipfs)?
-                            .chain_add(ipfs, chain_api)
+                        GitObject::from_git_commit(commit, &repo.odb()?)?
+                            .chain_add(ipfs, chain_api, signer)
                             .await?;
 
-                    eprintln!("Minted IPF with id: {}", minted_ipf_id);
+                    eprintln!(
+                        "Minted Git object {} on-chain with IPF ID: {}",
+                        git_object_hash, minted_ipf_id
+                    );
 
                     ipf_id_list.push(minted_ipf_id);
 
                     self.objects.push(format!("{}", obj.id()));
-                    eprintln!(
+                    debug!(
                         "[{}/{}] Commit {} uploaded to {}",
                         i + 1,
                         oid_count,
@@ -660,19 +575,22 @@ impl RepoData {
                         .as_tree()
                         .ok_or_else(|| eprintln!("Could not view {:?} as a tree", obj))
                         .unwrap();
-                    eprintln!("Pushing tree {:?}", tree);
+                    debug!("Pushing tree {:?}", tree);
 
                     let (git_object_hash, minted_ipf_id) =
-                        GitObject::from_git_tree(&tree, &repo.odb()?, ipfs)?
-                            .chain_add(ipfs, chain_api)
+                        GitObject::from_git_tree(tree, &repo.odb()?)?
+                            .chain_add(ipfs, chain_api, signer)
                             .await?;
 
-                    eprintln!("Minted IPF with id: {}", minted_ipf_id);
+                    eprintln!(
+                        "Minted Git object {} on-chain with IPF ID: {}",
+                        git_object_hash, minted_ipf_id
+                    );
 
                     ipf_id_list.push(minted_ipf_id);
 
                     self.objects.push(format!("{}", obj.id()));
-                    eprintln!(
+                    debug!(
                         "[{}/{}] Tree {} uploaded to {}",
                         i + 1,
                         oid_count,
@@ -685,19 +603,22 @@ impl RepoData {
                         .as_blob()
                         .ok_or_else(|| eprintln!("Could not view {:?} as a blob", obj))
                         .unwrap();
-                    eprintln!("Pushing blob {:?}", blob);
+                    debug!("Pushing blob {:?}", blob);
 
                     let (git_object_hash, minted_ipf_id) =
-                        GitObject::from_git_blob(&blob, &repo.odb()?, ipfs)?
-                            .chain_add(ipfs, chain_api)
+                        GitObject::from_git_blob(blob, &repo.odb()?)?
+                            .chain_add(ipfs, chain_api, signer)
                             .await?;
 
-                    eprintln!("Minted IPF with id: {}", minted_ipf_id);
+                    eprintln!(
+                        "Minted Git object {} on-chain with IPF ID: {}",
+                        git_object_hash, minted_ipf_id
+                    );
 
                     ipf_id_list.push(minted_ipf_id);
 
                     self.objects.push(format!("{}", obj.id()));
-                    eprintln!(
+                    debug!(
                         "[{}/{}] Blob {} uploaded to {}",
                         i + 1,
                         oid_count,
@@ -710,20 +631,23 @@ impl RepoData {
                         .as_tag()
                         .ok_or_else(|| eprintln!("Could not view {:?} as a tag", obj))
                         .unwrap();
-                    eprintln!("Pushing tag {:?}", tag);
+                    debug!("Pushing tag {:?}", tag);
 
                     let (git_object_hash, minted_ipf_id) =
-                        GitObject::from_git_tag(&tag, &repo.odb()?, ipfs)?
-                            .chain_add(ipfs, chain_api)
+                        GitObject::from_git_tag(tag, &repo.odb()?)?
+                            .chain_add(ipfs, chain_api, signer)
                             .await?;
 
-                    eprintln!("Minted IPF with id: {}", minted_ipf_id);
+                    eprintln!(
+                        "Minted Git object {} on-chain with IPF ID: {}",
+                        git_object_hash, minted_ipf_id
+                    );
 
                     ipf_id_list.push(minted_ipf_id);
 
                     self.objects.push(format!("{}", obj.id()));
 
-                    eprintln!(
+                    debug!(
                         "[{}/{}] Tag {} uploaded to {}",
                         i + 1,
                         oid_count,
@@ -749,19 +673,19 @@ impl RepoData {
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         for (i, &oid) in oids.iter().enumerate() {
-            eprintln!("[{}/{}] Fetching object {}", i + 1, oids.len(), oid);
+            debug!("[{}/{}] Fetching object {}", i + 1, oids.len(), oid);
 
             let obj_git_hash = self
                 .objects
                 .iter()
                 .find(|s| *s == &format!("{}", oid))
-                .expect(&format!("Could not find object {} in RemoteData", oid));
+                .unwrap_or_else(|| panic!("Could not find object {} in RemoteData", oid));
 
             let git_obj =
                 GitObject::chain_get(obj_git_hash.to_string(), ipfs, chain_api, ips_id).await?;
 
             if repo.odb()?.read_header(oid).is_ok() {
-                eprintln!("fetch objects: Object {} already present locally!", oid);
+                debug!("fetch objects: Object {} already present locally!", oid);
                 continue;
             }
 
@@ -776,10 +700,10 @@ impl RepoData {
             )?;
             if written_oid != oid {
                 let msg = format!("Object tree inconsistency detected: fetched {} from {}, but write result hashes to {}", oid, obj_git_hash, written_oid);
-                eprintln!("{}", msg);
+                debug!("{}", msg);
                 return Err(msg.into());
             }
-            eprintln!("Fetched object {} to {}", obj_git_hash, written_oid);
+            debug!("Fetched object {} to {}", obj_git_hash, written_oid);
         }
         Ok(())
     }
@@ -788,6 +712,7 @@ impl RepoData {
         &self,
         ipfs: &mut IpfsClient,
         chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
     ) -> Result<(u64, Option<u64>), Box<dyn Error>> {
         let events = chain_api
@@ -800,26 +725,26 @@ impl RepoData {
                         [2..],
                 ),
             )?
-            .sign_and_submit_then_watch_default(&PairSigner::<DefaultConfig, Pair>::new(
-                Alice.pair(),
-            ))
+            .sign_and_submit_then_watch_default(signer)
             .await?
             .wait_for_finalized_success()
             .await?;
 
         let new_ipf_id = events
-            .find_first::<crate::client::invarch::ipf::events::Minted>()?
+            .find_first::<invarch::ipf::events::Minted>()?
             .unwrap()
             .1;
 
-        let ips = chain_api
+        eprintln!("Minted Repo Data on-chain with IPF ID: {}", new_ipf_id);
+
+        let ips_info = chain_api
             .storage()
             .inv4()
             .ip_storage(&ips_id, None)
             .await?
             .ok_or(format!("IPS {ips_id} does not exist"))?;
 
-        for file in ips.data.0 {
+        for file in ips_info.data.0 {
             if let AnyId::IpfId(id) = file {
                 let ipf_info = chain_api
                     .storage()
@@ -834,33 +759,5 @@ impl RepoData {
         }
 
         Ok((new_ipf_id, None))
-    }
-}
-
-impl RefsFile {
-    pub fn get_latest_ref(&self) -> &(String, String) {
-        self.refs.first().unwrap()
-    }
-
-    pub fn from_reference_names(
-        reference_names: ReferenceNames<'_, '_>,
-        repo: &git2::Repository,
-    ) -> Self {
-        let a = Self {
-            refs: reference_names
-                .map(|ref_name| {
-                    ref_name.map(|s| {
-                        (
-                            repo.refname_to_id(s).map(|oid| oid.to_string()).unwrap(),
-                            s.to_string(),
-                        )
-                    })
-                })
-                .collect::<Result<Vec<(String, String)>, git2::Error>>()
-                .unwrap(),
-        };
-
-        eprintln!("refs: {:#?}", a);
-        a
     }
 }

@@ -1,27 +1,35 @@
-#![warn(clippy::pedantic)]
-#![allow(clippy::unnecessary_wraps)] // Allowed while TODOs in functions exists
-use crate::client::invarch::runtime_types::{
+#![allow(clippy::too_many_arguments)]
+
+use git2::Repository;
+use invarch::runtime_types::{
     invarch_runtime::Call, pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as IpsCall,
 };
-use git2::Repository;
 use ipfs_api::IpfsClient;
-use primitives::{BoxResult, Key, RepoData, Settings};
-use sp_keyring::{sr25519::sr25519::Pair, AccountKeyring::Alice};
+use log::debug;
+use primitives::{BoxResult, RepoData};
+use sp_keyring::AccountKeyring::Alice;
 use std::{
     env::{args, current_dir, var},
     fs::create_dir_all,
-    io::stdin,
+    io::{self},
     path::{Path, PathBuf},
+    process::Stdio,
 };
+use subxt::sp_core::Pair;
+use subxt::subxt;
 use subxt::{ClientBuilder, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
 
-mod client;
 mod primitives;
 mod util;
 
+#[subxt(runtime_metadata_path = "invarch_metadata.scale")]
+pub mod invarch {}
+
 pub async fn set_repo(
     ips_id: u32,
-    api: crate::client::invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
 ) -> BoxResult<RepoData> {
     let mut ipfs_client = IpfsClient::default();
     let data = api
@@ -87,14 +95,67 @@ async fn main() -> BoxResult<()> {
         )
     };
 
-    let api: crate::client::invarch::RuntimeApi<
-        DefaultConfig,
-        PolkadotExtrinsicParams<DefaultConfig>,
-    > = ClientBuilder::new()
-        .set_url("ws://127.0.0.1:9944")
-        .build()
-        .await?
-        .to_runtime_api();
+    let mut cmd = Command::new("git");
+    cmd.arg("credential");
+    cmd.arg("fill");
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("failed to spawn command");
+
+    let stdout = child
+        .stdout
+        .take()
+        .expect("child did not have a handle to stdout");
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .expect("child did not have a handle to stdout");
+
+    let mut out_reader = BufReader::new(stdout).lines();
+    // let mut in_writer = BufWriter::new(stdin);
+
+    // Ensure the child process is spawned in the runtime so it can
+    // make progress on its own while we await for any output.
+    tokio::spawn(async move {
+        let status = child
+            .wait()
+            .await
+            .expect("child process encountered an error");
+
+        println!("child status was: {}", status);
+    });
+
+    stdin
+        .write_all("protocol=inv4\nhost=\n\n".as_bytes())
+        .await
+        .expect("could not write to stdin");
+
+    drop(stdin);
+
+    let mut credential = String::new();
+
+    while let Some(line) = out_reader.next_line().await? {
+        if line.trim().starts_with("password=") {
+            credential = line.trim_start_matches("password=").to_string();
+        }
+    }
+
+    if credential.is_empty() {
+        error!("No credential")
+    }
+
+    let signer = &PairSigner::<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>::new(
+        sp_keyring::sr25519::sr25519::Pair::from_string(&credential, None).unwrap(),
+    );
+
+    let api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>> =
+        ClientBuilder::new()
+            .set_url("ws://127.0.0.1:9944")
+            .build()
+            .await?
+            .to_runtime_api();
 
     let git_dir = PathBuf::from(var("GIT_DIR")?);
     create_dir_all(
@@ -104,28 +165,19 @@ async fn main() -> BoxResult<()> {
             .join(&alias),
     )?;
 
-    let settings = Settings {
-        git_dir,
-        remote_alias: alias,
-        root: Key {
-            ips_id,
-            subasset_id,
-        },
-    };
-
-    let mut remote_repo = set_repo(settings.root.ips_id, api.clone()).await?;
-    eprintln!("RepoData: {:#?}", remote_repo);
+    let mut remote_repo = set_repo(ips_id, api.clone()).await?;
+    debug!("RepoData: {:#?}", remote_repo);
 
     loop {
         let repo = Repository::open_from_env().unwrap();
         let mut input = String::new();
-        stdin().read_line(&mut input)?;
+        io::stdin().read_line(&mut input)?;
 
         if input.is_empty() {
             return Ok(());
         }
 
-        eprintln!("{}", &input.clone());
+        debug!("{}", &input.clone());
 
         let mut args = input.split_ascii_whitespace();
 
@@ -133,8 +185,10 @@ async fn main() -> BoxResult<()> {
             (Some("push"), Some(ref_arg), None) => {
                 push(
                     &api,
+                    signer,
                     &mut remote_repo,
-                    &settings,
+                    ips_id,
+                    subasset_id,
                     repo,
                     IpfsClient::default(),
                     ref_arg,
@@ -145,7 +199,7 @@ async fn main() -> BoxResult<()> {
                 fetch(
                     &remote_repo,
                     &api,
-                    &settings,
+                    ips_id,
                     repo,
                     IpfsClient::default(),
                     sha,
@@ -165,9 +219,11 @@ async fn main() -> BoxResult<()> {
 }
 
 async fn push(
-    api: &crate::client::invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
     remote_repo: &mut RepoData,
-    settings: &Settings,
+    ips_id: u32,
+    subasset_id: Option<u32>,
     mut repo: Repository,
     mut ipfs: IpfsClient,
     ref_arg: &str,
@@ -188,73 +244,55 @@ async fn push(
     } else {
         first_half
     };
-    eprintln!("Parsed src: {}", src);
 
     let dst = refspec_iter
         .next()
         .ok_or_else(|| eprintln!("Could not read destination ref from refspec: {:?}", ref_arg))
         .unwrap();
-    eprintln!("Parsed dst: {}", dst);
 
     // Upload the object tree
     match remote_repo
-        .push_ref_from_str(
-            src,
-            dst,
-            force,
-            &mut repo,
-            &mut ipfs,
-            &api,
-            settings.root.ips_id,
-        )
+        .push_ref_from_str(src, dst, force, &mut repo, &mut ipfs, api, signer, ips_id)
         .await
     {
         Ok(mut ipf_id_list) => {
             let (new_repo_data, old_repo_data) = remote_repo
-                .mint_return_new_old_id(&mut ipfs, &api, settings.root.ips_id)
+                .mint_return_new_old_id(&mut ipfs, api, signer, ips_id)
                 .await?;
 
             if let Some(old_id) = old_repo_data {
-                eprintln!("Found old RepoData, removing it!");
+                eprintln!("Removing old Repo Data with IPF ID: {}", old_id);
 
                 let remove_call = Call::INV4(IpsCall::remove {
-                    ips_id: settings.root.ips_id,
+                    ips_id,
                     assets: vec![(AnyId::IpfId(old_id), Alice.to_account_id())],
                     new_metadata: None,
                 });
 
                 api.tx()
                     .inv4()
-                    .operate_multisig(
-                        false,
-                        (settings.root.ips_id, settings.root.subasset_id),
-                        remove_call,
-                    )?
-                    .sign_and_submit_default(&PairSigner::<DefaultConfig, Pair>::new(Alice.pair()))
+                    .operate_multisig(false, (ips_id, subasset_id), remove_call)?
+                    .sign_and_submit_default(signer)
                     .await?;
             }
 
             ipf_id_list.push(new_repo_data);
 
-            eprintln!("Appending new data!");
+            eprintln!(
+                "Appending new objects and repo data to repository under IPS ID: {}",
+                ips_id
+            );
 
             let append_call = Call::INV4(IpsCall::append {
-                ips_id: settings.root.ips_id,
-                assets: ipf_id_list
-                    .into_iter()
-                    .map(|ipf_id| AnyId::IpfId(ipf_id))
-                    .collect(),
+                ips_id,
+                assets: ipf_id_list.into_iter().map(AnyId::IpfId).collect(),
                 new_metadata: None,
             });
 
             api.tx()
                 .inv4()
-                .operate_multisig(
-                    true,
-                    (settings.root.ips_id, settings.root.subasset_id),
-                    append_call,
-                )?
-                .sign_and_submit_default(&PairSigner::<DefaultConfig, Pair>::new(Alice.pair()))
+                .operate_multisig(true, (ips_id, subasset_id), append_call)?
+                .sign_and_submit_default(signer)
                 .await?;
 
             println!("ok {}", dst);
@@ -270,15 +308,15 @@ async fn push(
 
 async fn fetch(
     remote_repo: &RepoData,
-    api: &crate::client::invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
-    settings: &Settings,
+    api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    ips_id: u32,
     mut repo: Repository,
     mut ipfs: IpfsClient,
     sha: &str,
     name: &str,
 ) -> BoxResult<()> {
     remote_repo
-        .fetch_to_ref_from_str(sha, name, &mut repo, &mut ipfs, api, settings.root.ips_id)
+        .fetch_to_ref_from_str(sha, name, &mut repo, &mut ipfs, api, ips_id)
         .await?;
 
     println!();
@@ -295,7 +333,6 @@ fn capabilities() -> BoxResult<()> {
 fn list(remote_repo: &RepoData) -> BoxResult<()> {
     for (name, git_hash) in &remote_repo.refs {
         let output = format!("{} {}", git_hash, name);
-        eprintln!("{}", output);
         println!("{}", output);
     }
     println!();
