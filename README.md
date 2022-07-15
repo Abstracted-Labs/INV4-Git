@@ -6,7 +6,7 @@ Make sure you already have `cargo` and `rust` installed. Then:
 ```sh
 cargo install --git https://github.com/InvArch/git-remote-gitarch
 ```
-The binary will be installed at `~/.cargo/bin/` as `git-remote-gitarch`
+The binary will be installed at `~/.cargo/bin/` as `git-remote-inv4`
 
 ## Testing
 Testing requires a running a local node and creating an IP Set on it.
@@ -46,7 +46,7 @@ git commit -m "First line of commit" -m "Second line of commit"
 Then the remote should be set by running:
 ```sh
 # 0 is the ID of the IP Set we made earlier
-git remote add origin "gitarch://0"
+git remote add origin "inv4://0"
 ```
 And finally:
 ```sh

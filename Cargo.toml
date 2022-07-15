@@ -1,5 +1,5 @@
 [package]
-name = "git-remote-gitarch"
+name = "git-remote-inv4"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,14 +11,15 @@ hex = "0.4.3"
 futures = "0.3.21"
 temp-dir = "0.1.11"
 git2 = "0.14.4"
+log = "0.4.17"
 
 [dependencies.tokio]
 version = "1.19.1"
-features = ["macros", "rt-multi-thread"]
+features = ["macros", "rt-multi-thread", "process", "io-std"]
 
 [dependencies.subxt]
 git = "https://github.com/paritytech/subxt"
-branch = "master"
+rev = "c55b7ba3e34118f61dc51499a0b38262c513aec4"
 
 [dependencies.codec]
 package = "parity-scale-codec"
