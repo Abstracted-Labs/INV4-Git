@@ -100,6 +100,7 @@ async fn main() -> BoxResult<()> {
     cmd.arg("fill");
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
 
     let mut child = cmd.spawn().expect("failed to spawn command");
 
@@ -111,7 +112,7 @@ async fn main() -> BoxResult<()> {
     let mut stdin = child
         .stdin
         .take()
-        .expect("child did not have a handle to stdout");
+        .expect("child did not have a handle to stdin");
 
     let mut out_reader = BufReader::new(stdout).lines();
     // let mut in_writer = BufWriter::new(stdin);
@@ -128,9 +129,11 @@ async fn main() -> BoxResult<()> {
     });
 
     stdin
-        .write_all("protocol=inv4\nhost=\n\n".as_bytes())
+        .write_all("protocol=inv4\nhost=\nusername= \n\n".as_bytes())
         .await
         .expect("could not write to stdin");
+
+    eprintln!("Seed Phrase or Private Key ↓");
 
     drop(stdin);
 

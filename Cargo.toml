@@ -15,7 +15,7 @@ log = "0.4.17"
 
 [dependencies.tokio]
 version = "1.19.1"
-features = ["macros", "rt-multi-thread", "process"]
+features = ["macros", "rt-multi-thread", "process", "io-std"]
 
 [dependencies.subxt]
 git = "https://github.com/paritytech/subxt"
