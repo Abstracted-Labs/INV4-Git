@@ -9,12 +9,18 @@ use futures::TryStreamExt;
 use git2::{Blob, Commit, Object, ObjectType, Odb, Oid, Repository, Tag, Tree};
 use ipfs_api::{IpfsApi, IpfsClient};
 use log::debug;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     error::Error,
     io::Cursor,
 };
 use subxt::{sp_core::H256, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Config {
+    pub chain_endpoint: String,
+}
 
 /// A magic value used to signal that a hash is a submodule tip (to be obtained by git on its own).
 pub static SUBMODULE_TIP_MARKER: &str = "submodule-tip";

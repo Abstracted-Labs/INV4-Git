@@ -1,17 +1,18 @@
 #![allow(clippy::too_many_arguments)]
 
+use dirs::config_dir;
 use git2::Repository;
 use invarch::runtime_types::{
     invarch_runtime::Call, pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as IpsCall,
 };
 use ipfs_api::IpfsClient;
 use log::debug;
-use primitives::{BoxResult, RepoData};
+use primitives::{BoxResult, Config, RepoData};
 use sp_keyring::AccountKeyring::Alice;
 use std::{
     env::{args, current_dir, var},
     fs::create_dir_all,
-    io::{self},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -95,6 +96,34 @@ async fn main() -> BoxResult<()> {
         )
     };
 
+    let mut config_file_path =
+        config_dir().expect("Operating system's configs directory not found");
+    config_file_path.push("INV4-Git/config.toml");
+
+    std::fs::create_dir_all(config_file_path.parent().unwrap()).unwrap();
+
+    let config: Config = if config_file_path.exists() {
+        let mut contents = String::new();
+        std::fs::File::options()
+            .write(true)
+            .read(true)
+            .create(false)
+            .open(config_file_path.clone())?
+            .read_to_string(&mut contents)?;
+
+        toml::from_str(&contents)?
+    } else {
+        let c = Config {
+            chain_endpoint: String::from("ws://127.0.0.1:9944"),
+        };
+
+        let mut f = std::fs::File::create(config_file_path)?;
+
+        f.write_all(toml::to_string(&c)?.as_bytes())?;
+
+        c
+    };
+
     let mut cmd = Command::new("git");
     cmd.arg("credential");
     cmd.arg("fill");
@@ -155,7 +184,7 @@ async fn main() -> BoxResult<()> {
 
     let api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>> =
         ClientBuilder::new()
-            .set_url("ws://127.0.0.1:9944")
+            .set_url(config.chain_endpoint)
             .build()
             .await?
             .to_runtime_api();
