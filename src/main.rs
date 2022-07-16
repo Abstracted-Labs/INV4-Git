@@ -324,8 +324,12 @@ async fn push(
             api.tx()
                 .inv4()
                 .operate_multisig(true, (ips_id, subasset_id), append_call)?
-                .sign_and_submit_default(signer)
+                .sign_and_submit_then_watch_default(signer)
+                .await?
+                .wait_for_in_block()
                 .await?;
+
+            eprintln!("New objects successfully appended to on-chain repository!");
 
             println!("ok {}", dst);
         }
