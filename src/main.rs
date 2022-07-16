@@ -4,8 +4,10 @@ use git2::Repository;
 use invarch::runtime_types::{
     invarch_runtime::Call, pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as IpsCall,
 };
+use ipfs::{Block, Ipfs, IpfsOptions, TestTypes, UninitializedIpfs};
 use ipfs_api::IpfsClient;
 use log::debug;
+use multihash::{Code, MultihashDigest};
 use primitives::{BoxResult, RepoData};
 use sp_keyring::AccountKeyring::Alice;
 use std::{
@@ -66,7 +68,7 @@ async fn main() -> BoxResult<()> {
         let mut args = args();
         args.next();
         (
-            args.next().ok_or("Missing alias argument.")?,
+            args.next().ok_or("Missing alias argument.&")?,
             args.next().ok_or("Missing url argument.")?,
         )
     };
@@ -151,6 +153,26 @@ async fn main() -> BoxResult<()> {
 
     let signer = &PairSigner::<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>::new(
         sp_keyring::sr25519::sr25519::Pair::from_string(&credential, None).unwrap(),
+    );
+
+    let mut opts = IpfsOptions::inmemory_with_generated_keys();
+    opts.mdns = false;
+    let (ipfs, fut): (Ipfs<TestTypes>, _) = UninitializedIpfs::new(opts).start().await.unwrap();
+    tokio::task::spawn(fut);
+
+    let hash = Code::Sha2_256.digest(b"hello world");
+
+    let early_cid = ipfs::Cid::new_v0(hash)?;
+
+    let data = b"hello world".to_vec().into_boxed_slice();
+
+    let cid = ipfs.put_block(Block::new(data, early_cid)).await?;
+
+    let pulled_data = ipfs.get_block(&cid).await.unwrap();
+
+    eprintln!(
+        "pulled data: {}",
+        String::from_utf8(pulled_data.data().to_vec())?
     );
 
     let api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>> =

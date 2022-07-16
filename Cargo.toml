@@ -6,12 +6,18 @@ edition = "2021"
 [dependencies]
 sp-keyring = "6.0.0"
 ipfs-api = "0.15.0"
-cid = "0.8.5"
+cid = "0.5.1"
 hex = "0.4.3"
 futures = "0.3.21"
 temp-dir = "0.1.11"
 git2 = "0.14.4"
 log = "0.4.17"
+
+#ipfs-embed = { version = "0.23.0", features = ["tokio"] }
+#libipld = "=0.12.0"
+#libp2p-dns = "=0.32.0"
+multihash = "0.11"
+ipfs = { git = "https://github.com/rs-ipfs/rust-ipfs" }
 
 [dependencies.tokio]
 version = "1.19.1"

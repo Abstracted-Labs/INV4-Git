@@ -1,4 +1,5 @@
-use cid::{multihash::MultihashGeneric, CidGeneric};
+use cid::CidGeneric;
+use multihash::MultihashGeneric;
 use subxt::sp_core::H256;
 
 use crate::primitives::BoxResult;
@@ -10,8 +11,8 @@ macro_rules! error {
     }};
 }
 
-pub fn generate_cid(hash: H256) -> BoxResult<CidGeneric<32>> {
-    Ok(CidGeneric::new_v0(MultihashGeneric::<32>::from_bytes(
-        hex::decode(format!("{:?}", hash).replace("0x", "1220"))?.as_slice(),
+pub fn generate_cid(hash: H256) -> BoxResult<ipfs::Cid> {
+    Ok(CidGeneric::new_v0(MultihashGeneric::from_bytes(
+        hex::decode(format!("{:?}", hash).replace("0x", "1220"))?,
     )?)?)
 }
