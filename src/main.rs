@@ -124,64 +124,6 @@ async fn main() -> BoxResult<()> {
         c
     };
 
-    let mut cmd = Command::new("git");
-    cmd.arg("credential");
-    cmd.arg("fill");
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
-
-    let mut child = cmd.spawn().expect("failed to spawn command");
-
-    let stdout = child
-        .stdout
-        .take()
-        .expect("child did not have a handle to stdout");
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .expect("child did not have a handle to stdin");
-
-    let mut out_reader = BufReader::new(stdout).lines();
-    // let mut in_writer = BufWriter::new(stdin);
-
-    // Ensure the child process is spawned in the runtime so it can
-    // make progress on its own while we await for any output.
-    tokio::spawn(async move {
-        let status = child
-            .wait()
-            .await
-            .expect("child process encountered an error");
-
-        println!("child status was: {}", status);
-    });
-
-    stdin
-        .write_all("protocol=inv4\nhost=\nusername= \n\n".as_bytes())
-        .await
-        .expect("could not write to stdin");
-
-    eprintln!("Seed Phrase or Private Key ↓");
-
-    drop(stdin);
-
-    let mut credential = String::new();
-
-    while let Some(line) = out_reader.next_line().await? {
-        if line.trim().starts_with("password=") {
-            credential = line.trim_start_matches("password=").to_string();
-        }
-    }
-
-    if credential.is_empty() {
-        error!("No credential")
-    }
-
-    let signer = &PairSigner::<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>::new(
-        sp_keyring::sr25519::sr25519::Pair::from_string(&credential, None).unwrap(),
-    );
-
     let api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>> =
         ClientBuilder::new()
             .set_url(config.chain_endpoint)
@@ -217,7 +159,6 @@ async fn main() -> BoxResult<()> {
             (Some("push"), Some(ref_arg), None) => {
                 push(
                     &api,
-                    signer,
                     &mut remote_repo,
                     ips_id,
                     subasset_id,
@@ -252,7 +193,6 @@ async fn main() -> BoxResult<()> {
 
 async fn push(
     api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
-    signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
     remote_repo: &mut RepoData,
     ips_id: u32,
     subasset_id: Option<u32>,
@@ -260,6 +200,59 @@ async fn push(
     mut ipfs: IpfsClient,
     ref_arg: &str,
 ) -> BoxResult<()> {
+    let mut cmd = Command::new("git");
+    cmd.arg("credential");
+    cmd.arg("fill");
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+
+    let mut child = cmd.spawn().expect("failed to spawn command");
+
+    let stdout = child
+        .stdout
+        .take()
+        .expect("child did not have a handle to stdout");
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .expect("child did not have a handle to stdin");
+
+    let mut out_reader = BufReader::new(stdout).lines();
+
+    tokio::spawn(async move {
+        child
+            .wait()
+            .await
+            .expect("child process encountered an error");
+    });
+
+    stdin
+        .write_all("protocol=inv4\nhost=\nusername= \n\n".as_bytes())
+        .await
+        .expect("could not write to stdin");
+
+    eprintln!("Seed Phrase or Private Key ↓");
+
+    drop(stdin);
+
+    let mut credential = String::new();
+
+    while let Some(line) = out_reader.next_line().await? {
+        if line.trim().starts_with("password=") {
+            credential = line.trim_start_matches("password=").to_string();
+        }
+    }
+
+    if credential.is_empty() {
+        error!("No credential")
+    }
+
+    let signer = &PairSigner::<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>::new(
+        sp_keyring::sr25519::sr25519::Pair::from_string(&credential, None).unwrap(),
+    );
+
     // Separate source, destination and the force flag
     let mut refspec_iter = ref_arg.split(':');
 
