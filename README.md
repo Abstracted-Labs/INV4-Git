@@ -1,4 +1,4 @@
-# git-remote-gitarch
+# git-remote-inv4
 A Git helper that integrates INV4 with the Git protocol.
 
 ## Installing
