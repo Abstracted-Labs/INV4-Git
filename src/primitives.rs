@@ -172,13 +172,17 @@ impl GitObject {
             )?
             .sign_and_submit_then_watch_default(signer)
             .await?
-            .wait_for_finalized_success()
+            .wait_for_in_block()
             .await?;
 
         let ipf_id = events
+            .fetch_events()
+            .await?
             .find_first::<invarch::ipf::events::Minted>()?
             .unwrap()
             .1;
+
+        events.wait_for_success().await?;
 
         Ok((git_hash, ipf_id))
     }
@@ -530,7 +534,7 @@ impl RepoData {
 
         let oid_count = oids.len();
 
-        eprintln!("Minting {} IPFs", oid_count);
+        eprintln!("Minting {} IPFs", oid_count + 1);
 
         for (i, oid) in oids.iter().enumerate() {
             let obj = repo.find_object(*oid, None)?;
@@ -733,13 +737,17 @@ impl RepoData {
             )?
             .sign_and_submit_then_watch_default(signer)
             .await?
-            .wait_for_finalized_success()
+            .wait_for_in_block()
             .await?;
 
         let new_ipf_id = events
+            .fetch_events()
+            .await?
             .find_first::<invarch::ipf::events::Minted>()?
             .unwrap()
             .1;
+
+        events.wait_for_success().await?;
 
         eprintln!("Minted Repo Data on-chain with IPF ID: {}", new_ipf_id);
 
