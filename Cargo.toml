@@ -15,6 +15,7 @@ log = "0.4.17"
 dirs = "4.0.0"
 serde = "1.0.139"
 toml = "0.5.9"
+twox-hash = "1.6.3"
 
 [dependencies.tokio]
 version = "1.19.1"

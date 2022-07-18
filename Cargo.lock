@@ -874,6 +874,7 @@ dependencies = [
  "temp-dir",
  "tokio",
  "toml",
+ "twox-hash",
 ]
 
 [[package]]

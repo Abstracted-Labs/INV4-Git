@@ -10,10 +10,9 @@ use log::debug;
 use primitives::{BoxResult, Config, RepoData};
 use sp_keyring::AccountKeyring::Alice;
 use std::{
-    env::{args, current_dir, var},
-    fs::create_dir_all,
+    env::args,
     io::{self, Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
     process::Stdio,
 };
 use subxt::sp_core::Pair;
@@ -63,7 +62,7 @@ pub async fn set_repo(
 
 #[tokio::main]
 async fn main() -> BoxResult<()> {
-    let (alias, raw_url) = {
+    let (_, raw_url) = {
         let mut args = args();
         args.next();
         (
@@ -71,8 +70,6 @@ async fn main() -> BoxResult<()> {
             args.next().ok_or("Missing url argument.")?,
         )
     };
-
-    eprintln!("alias {}", alias);
 
     let (ips_id, subasset_id) = {
         let mut url = Path::new(&raw_url).components();
@@ -133,28 +130,11 @@ async fn main() -> BoxResult<()> {
             .await?
             .to_runtime_api();
 
-    let git_dir = PathBuf::from(var("GIT_DIR")?);
-    create_dir_all(
-        current_dir()?
-            .join(&git_dir)
-            .join("remote-inv4")
-            .join(&alias),
-    )?;
-
     let mut remote_repo = set_repo(ips_id, api.clone()).await?;
     debug!("RepoData: {:#?}", remote_repo);
 
     loop {
         let repo = Repository::open_from_env().unwrap();
-
-        eprintln!(
-            "repo list: {:?}",
-            repo.find_remote(alias.as_str())?
-                .list()?
-                .iter()
-                .map(|a| a.name().to_string())
-                .collect::<Vec<String>>()
-        );
 
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
@@ -312,8 +292,6 @@ async fn push(
                     .sign_and_submit_default(signer)
                     .await?;
             }
-
-            //  ipf_id_list.push(new_repo_data);
 
             eprintln!(
                 "Appending new objects and repo data to repository under IPS ID: {}",
