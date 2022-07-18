@@ -10,10 +10,9 @@ use log::debug;
 use primitives::{BoxResult, Config, RepoData};
 use sp_keyring::AccountKeyring::Alice;
 use std::{
-    env::{args, current_dir, var},
-    fs::create_dir_all,
+    env::args,
     io::{self, Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
     process::Stdio,
 };
 use subxt::sp_core::Pair;
@@ -63,7 +62,7 @@ pub async fn set_repo(
 
 #[tokio::main]
 async fn main() -> BoxResult<()> {
-    let (alias, raw_url) = {
+    let (_, raw_url) = {
         let mut args = args();
         args.next();
         (
@@ -131,19 +130,12 @@ async fn main() -> BoxResult<()> {
             .await?
             .to_runtime_api();
 
-    let git_dir = PathBuf::from(var("GIT_DIR")?);
-    create_dir_all(
-        current_dir()?
-            .join(&git_dir)
-            .join("remote-inv4")
-            .join(&alias),
-    )?;
-
     let mut remote_repo = set_repo(ips_id, api.clone()).await?;
     debug!("RepoData: {:#?}", remote_repo);
 
     loop {
         let repo = Repository::open_from_env().unwrap();
+
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
 
@@ -280,7 +272,7 @@ async fn push(
         .push_ref_from_str(src, dst, force, &mut repo, &mut ipfs, api, signer, ips_id)
         .await
     {
-        Ok(mut ipf_id_list) => {
+        Ok(pack_ipf_id) => {
             let (new_repo_data, old_repo_data) = remote_repo
                 .mint_return_new_old_id(&mut ipfs, api, signer, ips_id)
                 .await?;
@@ -301,8 +293,6 @@ async fn push(
                     .await?;
             }
 
-            ipf_id_list.push(new_repo_data);
-
             eprintln!(
                 "Appending new objects and repo data to repository under IPS ID: {}",
                 ips_id
@@ -310,7 +300,7 @@ async fn push(
 
             let append_call = Call::INV4(IpsCall::append {
                 ips_id,
-                assets: ipf_id_list.into_iter().map(AnyId::IpfId).collect(),
+                assets: vec![AnyId::IpfId(pack_ipf_id), AnyId::IpfId(new_repo_data)], //ipf_id_list.into_iter().map(AnyId::IpfId).collect(),
                 new_metadata: None,
             });
 
