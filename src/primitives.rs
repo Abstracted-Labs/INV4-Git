@@ -6,14 +6,14 @@ use crate::{
 use cid::Cid;
 use codec::{Decode, Encode};
 use futures::TryStreamExt;
-use git2::{Blob, Commit, Object, ObjectType, Odb, Oid, Repository, Tag, Tree};
+use git2::{Blob, Commit, Object, ObjectType, Odb, Oid, PackBuilder, Repository, Tag, Tree};
 use ipfs_api::{IpfsApi, IpfsClient};
 use log::debug;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     error::Error,
-    io::Cursor,
+    io::{Cursor, Write},
 };
 use subxt::{sp_core::H256, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
 
@@ -26,11 +26,6 @@ pub struct Config {
 pub static SUBMODULE_TIP_MARKER: &str = "submodule-tip";
 
 pub type BoxResult<T> = Result<T, Box<dyn Error>>;
-
-#[derive(Encode, Decode, Debug)]
-pub struct RefsFile {
-    pub refs: Vec<(String, String)>,
-}
 
 #[derive(Clone, Debug, Encode, Decode)]
 pub struct GitObject {
@@ -55,6 +50,41 @@ pub enum GitObjectMetadata {
     Tree { entry_git_hashes: BTreeSet<String> },
     #[allow(missing_docs)]
     Blob,
+}
+
+pub async fn chain_get_pack(
+    pack_name: String,
+    ipfs: &mut IpfsClient,
+    chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    ips_id: u32,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let ips_info = chain_api
+        .storage()
+        .inv4()
+        .ip_storage(&ips_id, None)
+        .await?
+        .ok_or(format!("IPS {ips_id} does not exist"))?;
+
+    for file in ips_info.data.0 {
+        if let AnyId::IpfId(id) = file {
+            let ipf_info = chain_api
+                .storage()
+                .ipf()
+                .ipf_storage(&id, None)
+                .await?
+                .ok_or("Internal error: IPF listed from IPS does not exist")?;
+            if String::from_utf8(ipf_info.metadata.0.clone())? == *pack_name {
+                return Ok(ipfs
+                    .cat(&generate_cid(ipf_info.data.0.into())?.to_string())
+                    .map_ok(|c| c.to_vec())
+                    .try_concat()
+                    .await?
+                    .as_slice()
+                    .to_vec());
+            }
+        }
+    }
+    error!("git_hash ipf not found")
 }
 
 impl GitObject {
@@ -190,10 +220,10 @@ impl GitObject {
 
 #[derive(Encode, Decode, Debug, Clone)]
 pub struct RepoData {
-    /// All refs this repository knows; a {name -> sha1} mapping
+    /// All refs this repository knows; a {name -> sha1} map
     pub refs: BTreeMap<String, String>,
-    /// All objects this repository contains; a {sha1} vec
-    pub objects: Vec<String>,
+    /// All objects this repository contains; a {sha1 -> pack name} map
+    pub objects: BTreeMap<String, String>,
 }
 
 impl RepoData {
@@ -218,7 +248,7 @@ impl RepoData {
         chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
-    ) -> Result<Vec<u64>, Box<dyn Error>> {
+    ) -> Result<u64, Box<dyn Error>> {
         // Deleting `ref_dst` was requested
         if ref_src.is_empty() {
             debug!("Removing ref {} from index", ref_dst);
@@ -229,7 +259,8 @@ impl RepoData {
                 );
                 debug!("Available refs:\n{:#?}", self.refs);
             }
-            return Ok(vec![]);
+            // return Ok(vec![]);
+            error!("ref_srd empty")
         }
         let reference = repo.find_reference(ref_src)?.resolve()?;
 
@@ -285,18 +316,18 @@ impl RepoData {
             repo,
         )?;
 
-        let ipf_id_list = self
+        let ipf_id = self
             .push_git_objects(&objs_for_push, repo, ipfs, chain_api, signer)
             .await?;
 
         // Add all submodule tips to the index
-        for _ in submodules_for_push {
-            self.objects.push(SUBMODULE_TIP_MARKER.to_string());
-        }
+        //   for _ in submodules_for_push {
+        //       self.objects.push(SUBMODULE_TIP_MARKER.to_string());
+        //   }
 
         self.refs
             .insert(ref_dst.to_owned(), format!("{}", obj.id()));
-        Ok(ipf_id_list)
+        Ok(ipf_id)
     }
 
     pub fn enumerate_for_push(
@@ -311,7 +342,7 @@ impl RepoData {
 
         let mut obj_cnt = 1;
         while let Some(obj) = stack.pop() {
-            if self.objects.contains(&obj.id().to_string()) {
+            if self.objects.contains_key(&obj.id().to_string()) {
                 debug!("Object {} already in RepoData", obj.id());
                 continue;
             }
@@ -475,10 +506,20 @@ impl RepoData {
                 continue;
             }
 
-            let obj_git_hash = self
+            // let obj_git_hash = self
+            //     .objects
+            //     .iter()
+            //     .find(|s| *s == &format!("{}", oid))
+            //     .ok_or_else(|| {
+            //         let msg = format!("Could not find object {} in the index", oid);
+            //         debug!("{}", msg);
+            //         msg
+            //     })?
+            //     .clone();
+
+            let obj_pack_name = self
                 .objects
-                .iter()
-                .find(|s| *s == &format!("{}", oid))
+                .get(&format!("{}", oid))
                 .ok_or_else(|| {
                     let msg = format!("Could not find object {} in the index", oid);
                     debug!("{}", msg);
@@ -486,37 +527,41 @@ impl RepoData {
                 })?
                 .clone();
 
-            if obj_git_hash == SUBMODULE_TIP_MARKER {
+            if obj_pack_name == SUBMODULE_TIP_MARKER {
                 debug!("Ommitting submodule {}", oid.to_string());
                 return Ok(());
             }
 
             fetch_todo.insert(oid);
 
-            let git_obj =
-                GitObject::chain_get(obj_git_hash.clone(), ipfs, chain_api, ips_id).await?;
+            //  let pack =
+            //      GitObject::chain_get(obj_git_hash.clone(), ipfs, chain_api, ips_id).await?;
 
-            match git_obj.clone().metadata {
-                GitObjectMetadata::Commit {
-                    parent_git_hashes,
-                    tree_git_hash,
-                } => {
-                    stack.push(Oid::from_str(&tree_git_hash)?);
+            //     let pack = chain_get_pack(obj_pack_name, ipfs, chain_api, ips_id).await?;
 
-                    for parent_git_hash in parent_git_hashes {
-                        stack.push(Oid::from_str(&parent_git_hash)?);
-                    }
-                }
-                GitObjectMetadata::Tag { target_git_hash } => {
-                    stack.push(Oid::from_str(&target_git_hash)?);
-                }
-                GitObjectMetadata::Tree { entry_git_hashes } => {
-                    for entry_git_hash in entry_git_hashes {
-                        stack.push(Oid::from_str(&entry_git_hash)?);
-                    }
-                }
-                GitObjectMetadata::Blob => {}
-            }
+            //   repo.odb()?.packwriter()?.write(pack.as_slice())?;
+
+            // match git_obj.clone().metadata {
+            //     GitObjectMetadata::Commit {
+            //         parent_git_hashes,
+            //         tree_git_hash,
+            //     } => {
+            //         stack.push(Oid::from_str(&tree_git_hash)?);
+
+            //         for parent_git_hash in parent_git_hashes {
+            //             stack.push(Oid::from_str(&parent_git_hash)?);
+            //         }
+            //     }
+            //     GitObjectMetadata::Tag { target_git_hash } => {
+            //         stack.push(Oid::from_str(&target_git_hash)?);
+            //     }
+            //     GitObjectMetadata::Tree { entry_git_hashes } => {
+            //         for entry_git_hash in entry_git_hashes {
+            //             stack.push(Oid::from_str(&entry_git_hash)?);
+            //         }
+            //     }
+            //     GitObjectMetadata::Blob => {}
+            // }
         }
 
         Ok(())
@@ -529,27 +574,33 @@ impl RepoData {
         ipfs: &mut IpfsClient,
         chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
-    ) -> Result<Vec<u64>, Box<dyn Error>> {
-        let mut ipf_id_list = vec![];
+    ) -> Result<u64, Box<dyn Error>> {
+        //  let mut ipf_id_list = vec![];
 
         let oid_count = oids.len();
 
         eprintln!("Minting {} IPFs", oid_count + 1);
 
+        let mut objects_list = vec![];
+
+        let mut pack_builder = repo.packbuilder()?;
+
         for (i, oid) in oids.iter().enumerate() {
             let obj = repo.find_object(*oid, None)?;
             debug!("Current object: {:?} at {}", obj.kind(), obj.id());
 
-            if self.objects.contains(&obj.id().to_string()) {
+            if self.objects.contains_key(&obj.id().to_string()) {
                 debug!("push_objects: Object {} already in RepoData", obj.id());
                 continue;
             }
 
             let obj_type = obj.kind().ok_or_else(|| {
                 let msg = format!("Cannot determine type of object {}", obj.id());
-                debug_assert_eq!("{}", msg);
+                debug!("{}", msg);
                 msg
             })?;
+
+            eprintln!("object type: {}", obj_type.to_string());
 
             match obj_type {
                 ObjectType::Commit => {
@@ -559,26 +610,30 @@ impl RepoData {
                         .unwrap();
                     debug!("Pushing commit {:?}", commit);
 
-                    let (git_object_hash, minted_ipf_id) =
-                        GitObject::from_git_commit(commit, &repo.odb()?)?
-                            .chain_add(ipfs, chain_api, signer)
-                            .await?;
+                    //  let (git_object_hash, minted_ipf_id) =
+                    //      GitObject::from_git_commit(commit, &repo.odb()?)?
+                    //  .chain_add(ipfs, chain_api, signer)
+                    // .await?;
 
-                    eprintln!(
-                        "Minted Git object {} on-chain with IPF ID: {}",
-                        git_object_hash, minted_ipf_id
-                    );
+                    //   eprintln!(
+                    //       "Minted Git object {} on-chain with IPF ID: {}",
+                    //       git_object_hash, minted_ipf_id
+                    //   );
 
-                    ipf_id_list.push(minted_ipf_id);
+                    //   ipf_id_list.push(minted_ipf_id);
 
-                    self.objects.push(format!("{}", obj.id()));
-                    debug!(
-                        "[{}/{}] Commit {} uploaded to {}",
-                        i + 1,
-                        oid_count,
-                        obj.id(),
-                        git_object_hash
-                    );
+                    pack_builder.insert_commit(obj.id())?;
+
+                    objects_list.push(obj.id());
+
+                    //  self.objects.push(format!("{}", obj.id()));
+                    //   debug!(
+                    //       "[{}/{}] Commit {} uploaded to {}",
+                    //       i + 1,
+                    //       oid_count,
+                    //       obj.id(),
+                    //       git_object_hash
+                    //   );
                 }
                 ObjectType::Tree => {
                     let tree = obj
@@ -587,26 +642,29 @@ impl RepoData {
                         .unwrap();
                     debug!("Pushing tree {:?}", tree);
 
-                    let (git_object_hash, minted_ipf_id) =
-                        GitObject::from_git_tree(tree, &repo.odb()?)?
-                            .chain_add(ipfs, chain_api, signer)
-                            .await?;
+                    pack_builder.insert_tree(obj.id())?;
+                    objects_list.push(obj.id());
 
-                    eprintln!(
-                        "Minted Git object {} on-chain with IPF ID: {}",
-                        git_object_hash, minted_ipf_id
-                    );
+                    // let (git_object_hash, minted_ipf_id) =
+                    //     GitObject::from_git_tree(tree, &repo.odb()?)?
+                    //         .chain_add(ipfs, chain_api, signer)
+                    //         .await?;
 
-                    ipf_id_list.push(minted_ipf_id);
+                    // eprintln!(
+                    //     "Minted Git object {} on-chain with IPF ID: {}",
+                    //     git_object_hash, minted_ipf_id
+                    // );
 
-                    self.objects.push(format!("{}", obj.id()));
-                    debug!(
-                        "[{}/{}] Tree {} uploaded to {}",
-                        i + 1,
-                        oid_count,
-                        obj.id(),
-                        git_object_hash
-                    );
+                    // ipf_id_list.push(minted_ipf_id);
+
+                    // self.objects.push(format!("{}", obj.id()));
+                    // debug!(
+                    //     "[{}/{}] Tree {} uploaded to {}",
+                    //     i + 1,
+                    //     oid_count,
+                    //     obj.id(),
+                    //     git_object_hash
+                    // );
                 }
                 ObjectType::Blob => {
                     let blob = obj
@@ -615,26 +673,29 @@ impl RepoData {
                         .unwrap();
                     debug!("Pushing blob {:?}", blob);
 
-                    let (git_object_hash, minted_ipf_id) =
-                        GitObject::from_git_blob(blob, &repo.odb()?)?
-                            .chain_add(ipfs, chain_api, signer)
-                            .await?;
+                    pack_builder.insert_object(obj.id(), None)?;
+                    objects_list.push(obj.id());
 
-                    eprintln!(
-                        "Minted Git object {} on-chain with IPF ID: {}",
-                        git_object_hash, minted_ipf_id
-                    );
+                    // let (git_object_hash, minted_ipf_id) =
+                    //     GitObject::from_git_blob(blob, &repo.odb()?)?
+                    //         .chain_add(ipfs, chain_api, signer)
+                    //         .await?;
 
-                    ipf_id_list.push(minted_ipf_id);
+                    // eprintln!(
+                    //     "Minted Git object {} on-chain with IPF ID: {}",
+                    //     git_object_hash, minted_ipf_id
+                    // );
 
-                    self.objects.push(format!("{}", obj.id()));
-                    debug!(
-                        "[{}/{}] Blob {} uploaded to {}",
-                        i + 1,
-                        oid_count,
-                        obj.id(),
-                        git_object_hash
-                    );
+                    // ipf_id_list.push(minted_ipf_id);
+
+                    // self.objects.push(format!("{}", obj.id()));
+                    // debug!(
+                    //     "[{}/{}] Blob {} uploaded to {}",
+                    //     i + 1,
+                    //     oid_count,
+                    //     obj.id(),
+                    //     git_object_hash
+                    // );
                 }
                 ObjectType::Tag => {
                     let tag = obj
@@ -643,34 +704,79 @@ impl RepoData {
                         .unwrap();
                     debug!("Pushing tag {:?}", tag);
 
-                    let (git_object_hash, minted_ipf_id) =
-                        GitObject::from_git_tag(tag, &repo.odb()?)?
-                            .chain_add(ipfs, chain_api, signer)
-                            .await?;
+                    pack_builder.insert_object(obj.id(), None)?;
+                    objects_list.push(obj.id());
 
-                    eprintln!(
-                        "Minted Git object {} on-chain with IPF ID: {}",
-                        git_object_hash, minted_ipf_id
-                    );
+                    // let (git_object_hash, minted_ipf_id) =
+                    //     GitObject::from_git_tag(tag, &repo.odb()?)?
+                    //         .chain_add(ipfs, chain_api, signer)
+                    //         .await?;
 
-                    ipf_id_list.push(minted_ipf_id);
+                    // eprintln!(
+                    //     "Minted Git object {} on-chain with IPF ID: {}",
+                    //     git_object_hash, minted_ipf_id
+                    // );
 
-                    self.objects.push(format!("{}", obj.id()));
+                    // ipf_id_list.push(minted_ipf_id);
 
-                    debug!(
-                        "[{}/{}] Tag {} uploaded to {}",
-                        i + 1,
-                        oid_count,
-                        obj.id(),
-                        git_object_hash
-                    );
+                    // self.objects.push(format!("{}", obj.id()));
+
+                    // debug!(
+                    //     "[{}/{}] Tag {} uploaded to {}",
+                    //     i + 1,
+                    //     oid_count,
+                    //     obj.id(),
+                    //     git_object_hash
+                    // );
                 }
                 other => {
                     return Err(format!("Don't know how to traverse a {}", other).into());
                 }
             }
         }
-        Ok(ipf_id_list)
+
+        let mut buf = git2::Buf::new();
+        pack_builder.write_buf(&mut buf)?;
+
+        pack_builder.foreach(|_| false)?;
+
+        for oid in objects_list {
+            self.objects
+                .insert(oid.to_string(), pack_builder.name().unwrap().to_string());
+        }
+
+        eprintln!("objects list: {:#?}", self.objects);
+
+        let mut file = std::fs::File::create("test.pack")?;
+        file.write_all(&buf)?;
+
+        debug!("Pushing pack to IPFS");
+        let ipfs_hash =
+            &Cid::try_from(ipfs.add(Cursor::new(buf.to_vec())).await?.hash)?.to_bytes()[2..];
+
+        debug!("Sending pack to the chain");
+        let events = chain_api
+            .tx()
+            .ipf()
+            .mint(
+                pack_builder.name().unwrap().as_bytes().to_vec(),
+                H256::from_slice(ipfs_hash),
+            )?
+            .sign_and_submit_then_watch_default(signer)
+            .await?
+            .wait_for_in_block()
+            .await?;
+
+        let ipf_id = events
+            .fetch_events()
+            .await?
+            .find_first::<invarch::ipf::events::Minted>()?
+            .unwrap()
+            .1;
+
+        events.wait_for_success().await?;
+
+        Ok(ipf_id)
     }
 
     /// Download git objects in `oids` from IPFS and instantiate them in `repo`.
@@ -685,35 +791,53 @@ impl RepoData {
         for (i, &oid) in oids.iter().enumerate() {
             debug!("[{}/{}] Fetching object {}", i + 1, oids.len(), oid);
 
-            let obj_git_hash = self
+            // let obj_git_hash = self
+            //     .objects
+            //     .iter()
+            //     .find(|s| *s == &format!("{}", oid))
+            //     .unwrap_or_else(|| panic!("Could not find object {} in RemoteData", oid));
+
+            let obj_pack_name = self
                 .objects
-                .iter()
-                .find(|s| *s == &format!("{}", oid))
-                .unwrap_or_else(|| panic!("Could not find object {} in RemoteData", oid));
+                .get(&format!("{}", oid))
+                .ok_or_else(|| {
+                    let msg = format!("Could not find object {} in the index", oid);
+                    debug!("{}", msg);
+                    msg
+                })?
+                .clone();
 
-            let git_obj =
-                GitObject::chain_get(obj_git_hash.to_string(), ipfs, chain_api, ips_id).await?;
+            // let git_obj =
+            //   GitObject::chain_get(obj_git_hash.to_string(), ipfs, chain_api, ips_id).await?;
 
-            if repo.odb()?.read_header(oid).is_ok() {
-                debug!("fetch objects: Object {} already present locally!", oid);
-                continue;
-            }
+            let pack = chain_get_pack(obj_pack_name, ipfs, chain_api, ips_id).await?;
 
-            let written_oid = repo.odb()?.write(
-                match git_obj.metadata {
-                    GitObjectMetadata::Blob => ObjectType::Blob,
-                    GitObjectMetadata::Commit { .. } => ObjectType::Commit,
-                    GitObjectMetadata::Tag { .. } => ObjectType::Tag,
-                    GitObjectMetadata::Tree { .. } => ObjectType::Tree,
-                },
-                &git_obj.raw_data_ipfs_hash,
-            )?;
-            if written_oid != oid {
-                let msg = format!("Object tree inconsistency detected: fetched {} from {}, but write result hashes to {}", oid, obj_git_hash, written_oid);
-                debug!("{}", msg);
-                return Err(msg.into());
-            }
-            debug!("Fetched object {} to {}", obj_git_hash, written_oid);
+            let odb = repo.odb()?;
+            let mut packwriter = odb.packwriter()?;
+            packwriter.write(pack.as_slice())?;
+
+            packwriter.commit()?;
+
+            //  if repo.odb()?.read_header(oid).is_ok() {
+            //      debug!("fetch objects: Object {} already present locally!", oid);
+            //      continue;
+            //  }
+
+            //  let written_oid = repo.odb()?.write(
+            //      match git_obj.metadata {
+            //          GitObjectMetadata::Blob => ObjectType::Blob,
+            //          GitObjectMetadata::Commit { .. } => ObjectType::Commit,
+            //          GitObjectMetadata::Tag { .. } => ObjectType::Tag,
+            //          GitObjectMetadata::Tree { .. } => ObjectType::Tree,
+            //      },
+            //      &git_obj.raw_data_ipfs_hash,
+            //  )?;
+            //  if written_oid != oid {
+            //      let msg = format!("Object tree inconsistency detected: fetched {} from {}, but write result hashes to {}", oid, obj_git_hash, written_oid);
+            //      debug!("{}", msg);
+            //      return Err(msg.into());
+            //  }
+            //  debug!("Fetched object {} to {}", obj_git_hash, written_oid);
         }
         Ok(())
     }

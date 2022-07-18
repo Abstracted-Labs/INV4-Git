@@ -72,6 +72,8 @@ async fn main() -> BoxResult<()> {
         )
     };
 
+    eprintln!("alias {}", alias);
+
     let (ips_id, subasset_id) = {
         let mut url = Path::new(&raw_url).components();
         url.next();
@@ -144,6 +146,16 @@ async fn main() -> BoxResult<()> {
 
     loop {
         let repo = Repository::open_from_env().unwrap();
+
+        eprintln!(
+            "repo list: {:?}",
+            repo.find_remote(alias.as_str())?
+                .list()?
+                .iter()
+                .map(|a| a.name().to_string())
+                .collect::<Vec<String>>()
+        );
+
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
 
@@ -280,7 +292,7 @@ async fn push(
         .push_ref_from_str(src, dst, force, &mut repo, &mut ipfs, api, signer, ips_id)
         .await
     {
-        Ok(mut ipf_id_list) => {
+        Ok(pack_ipf_id) => {
             let (new_repo_data, old_repo_data) = remote_repo
                 .mint_return_new_old_id(&mut ipfs, api, signer, ips_id)
                 .await?;
@@ -301,7 +313,7 @@ async fn push(
                     .await?;
             }
 
-            ipf_id_list.push(new_repo_data);
+            //  ipf_id_list.push(new_repo_data);
 
             eprintln!(
                 "Appending new objects and repo data to repository under IPS ID: {}",
@@ -310,7 +322,7 @@ async fn push(
 
             let append_call = Call::INV4(IpsCall::append {
                 ips_id,
-                assets: ipf_id_list.into_iter().map(AnyId::IpfId).collect(),
+                assets: vec![AnyId::IpfId(pack_ipf_id), AnyId::IpfId(new_repo_data)], //ipf_id_list.into_iter().map(AnyId::IpfId).collect(),
                 new_metadata: None,
             });
 
