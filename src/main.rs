@@ -7,7 +7,7 @@ use invarch::runtime_types::{
 };
 use ipfs_api::IpfsClient;
 use log::debug;
-use primitives::{BoxResult, Config, RepoData};
+use primitives::{BoxResult, Chain, Config, RepoData};
 use sp_keyring::AccountKeyring::Alice;
 use std::{
     env::args,
@@ -71,12 +71,18 @@ async fn main() -> BoxResult<()> {
         )
     };
 
-    let (ips_id, subasset_id) = {
+    let (chain_string, ips_id, subasset_id) = {
         let mut url = Path::new(&raw_url).components();
         url.next();
         (
             url.next()
-                .ok_or("Missing IPS id. Expected: 'inv4://>ips_id<'")?
+                .ok_or("Missing chain. Expected: 'inv4://>chain</ips_id'")?
+                .as_os_str()
+                .to_str()
+                .ok_or("Input was not UTF-8")?
+                .parse::<String>()?,
+            url.next()
+                .ok_or("Missing IPS id. Expected: 'inv4://chain/>ips_id<'")?
                 .as_os_str()
                 .to_str()
                 .ok_or("Input was not UTF-8")?
@@ -94,6 +100,8 @@ async fn main() -> BoxResult<()> {
             },
         )
     };
+
+    let _chain = Chain::from_str(chain_string)?;
 
     let mut config_file_path =
         config_dir().expect("Operating system's configs directory not found");

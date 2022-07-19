@@ -28,6 +28,19 @@ pub static SUBMODULE_TIP_MARKER: &str = "submodule-tip";
 
 pub type BoxResult<T> = Result<T, Box<dyn Error>>;
 
+pub enum Chain {
+    Tinkernet,
+}
+
+impl Chain {
+    pub fn from_str(s: String) -> Result<Self, Box<dyn Error>> {
+        match s.to_lowercase().as_str() {
+            "tinkernet" => Ok(Self::Tinkernet),
+            _ => Err("Not a supported chain".into()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Encode, Decode)]
 pub struct MultiObject {
     pub hash: String,
