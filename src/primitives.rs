@@ -1,9 +1,5 @@
-use crate::{
-    error,
-    invarch::{self, runtime_types::pallet_inv4::pallet::AnyId},
-    util::generate_cid,
-};
-use cid::Cid;
+use crate::tinkernet;
+use cid::{multihash::MultihashGeneric, CidGeneric};
 use codec::{Decode, Encode};
 use futures::TryStreamExt;
 use git2::{Blob, Commit, Object, ObjectType, Odb, Oid, Repository, Tag, Tree};
@@ -13,9 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     error::Error,
+    fmt::Display,
     io::Cursor,
 };
-use subxt::{sp_core::H256, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
+use subxt::{sp_core::H256, ClientBuilder, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
 use twox_hash::xxh3;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -28,16 +25,201 @@ pub static SUBMODULE_TIP_MARKER: &str = "submodule-tip";
 
 pub type BoxResult<T> = Result<T, Box<dyn Error>>;
 
+#[derive(Clone)]
 pub enum Chain {
-    Tinkernet,
+    Tinkernet {
+        api: tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    },
+}
+
+pub trait INV4AnyId {
+    fn nft_id(&self) -> Option<NFTIdByChain>;
+}
+
+impl INV4AnyId for tinkernet::runtime_types::pallet_inv4::pallet::AnyId<u32, u64, (u32, u32), u32> {
+    fn nft_id(&self) -> Option<NFTIdByChain> {
+        if let tinkernet::runtime_types::pallet_inv4::pallet::AnyId::IpfId(id) = self {
+            Some(NFTIdByChain::Tinkernet(*id))
+        } else {
+            None
+        }
+    }
+}
+
+pub trait NFTInfo {
+    fn data(&self) -> Result<CidGeneric<32>, Box<dyn Error>>;
+    fn metadata(&self) -> Vec<u8>;
+}
+
+impl NFTInfo
+    for tinkernet::runtime_types::invarch_primitives::IpfInfo<
+        subxt::sp_runtime::AccountId32,
+        subxt::sp_core::H256,
+        tinkernet::runtime_types::frame_support::storage::bounded_vec::BoundedVec<u8>,
+    >
+{
+    fn data(&self) -> Result<CidGeneric<32>, Box<dyn Error>> {
+        Ok(CidGeneric::new_v0(MultihashGeneric::<32>::from_bytes(
+            hex::decode(format!("{:?}", self.data.0).replace("0x", "1220"))?.as_slice(),
+        )?)?)
+    }
+
+    fn metadata(&self) -> Vec<u8> {
+        self.metadata.0.clone()
+    }
+}
+
+#[derive(Clone)]
+pub enum NFTIdByChain {
+    Tinkernet(u64),
+}
+
+impl Display for NFTIdByChain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Tinkernet(id) => id,
+            }
+        )
+    }
 }
 
 impl Chain {
-    pub fn from_str(s: String) -> Result<Self, Box<dyn Error>> {
+    pub async fn from_str(s: String, config: Config) -> Result<Self, Box<dyn Error>> {
         match s.to_lowercase().as_str() {
-            "tinkernet" => Ok(Self::Tinkernet),
+            "tinkernet" => Ok(Self::Tinkernet {
+                api: ClientBuilder::new()
+                    .set_url(config.chain_endpoint)
+                    .build()
+                    .await?
+                    .to_runtime_api(),
+            }),
             _ => Err("Not a supported chain".into()),
         }
+    }
+
+    pub async fn ips_data(
+        &self,
+        ips_id: u32,
+    ) -> Result<impl IntoIterator<Item = impl INV4AnyId>, Box<dyn Error>> {
+        Ok(match self {
+            Chain::Tinkernet { api } => {
+                api.storage()
+                    .inv4()
+                    .ip_storage(&ips_id, None)
+                    .await?
+                    .ok_or(format!("IPS {ips_id} does not exist"))?
+                    .data
+                    .0
+            }
+        })
+    }
+
+    pub async fn nft_info(&self, nft_id: &NFTIdByChain) -> Result<impl NFTInfo, Box<dyn Error>> {
+        Ok(match (self, nft_id) {
+            (Chain::Tinkernet { api }, NFTIdByChain::Tinkernet(id)) => api
+                .storage()
+                .ipf()
+                .ipf_storage(&id, None)
+                .await?
+                .ok_or("Internal error: IPF listed from IPS does not exist")?,
+        })
+    }
+
+    pub async fn mint_nft(
+        &self,
+        metadata: Vec<u8>,
+        data: CidGeneric<32>,
+        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
+    ) -> Result<NFTIdByChain, Box<dyn Error>> {
+        Ok(match self {
+            Chain::Tinkernet { api } => {
+                let events = api
+                    .tx()
+                    .ipf()
+                    .mint(metadata, H256::from_slice(&data.to_bytes()[2..]))?
+                    .sign_and_submit_then_watch_default(signer)
+                    .await?
+                    .wait_for_in_block()
+                    .await?;
+
+                let ipf_id = events
+                    .fetch_events()
+                    .await?
+                    .find_first::<tinkernet::ipf::events::Minted>()?
+                    .unwrap()
+                    .1;
+
+                events.wait_for_success().await?;
+
+                NFTIdByChain::Tinkernet(ipf_id)
+            }
+        })
+    }
+
+    pub async fn remove_nft(
+        &self,
+        nft_id: &NFTIdByChain,
+        ips_id: u32,
+        subasset_id: Option<u32>,
+        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
+    ) -> Result<(), Box<dyn Error>> {
+        Ok(match (self, nft_id) {
+            (Chain::Tinkernet { api }, NFTIdByChain::Tinkernet(nft_id)) => {
+                let remove_call = tinkernet::runtime_types::invarch_runtime::Call::INV4(
+                    tinkernet::runtime_types::pallet_inv4::pallet::Call::remove {
+                        ips_id,
+                        assets: vec![(
+                            tinkernet::runtime_types::pallet_inv4::pallet::AnyId::IpfId(*nft_id),
+                            signer.account_id().clone(),
+                        )],
+                        new_metadata: None,
+                    },
+                );
+
+                api.tx()
+                    .inv4()
+                    .operate_multisig(false, (ips_id, subasset_id), remove_call)?
+                    .sign_and_submit_default(signer)
+                    .await?;
+            }
+        })
+    }
+
+    pub async fn append_nfts(
+        &self,
+        nft_ids: (&NFTIdByChain, &NFTIdByChain),
+        ips_id: u32,
+        subasset_id: Option<u32>,
+        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
+    ) -> Result<(), Box<dyn Error>> {
+        Ok(match (self, nft_ids) {
+            (
+                Chain::Tinkernet { api },
+                (NFTIdByChain::Tinkernet(multi_object), NFTIdByChain::Tinkernet(repo_data)),
+            ) => {
+                let append_call = tinkernet::runtime_types::invarch_runtime::Call::INV4(
+                    tinkernet::runtime_types::pallet_inv4::pallet::Call::append {
+                        ips_id,
+                        assets: vec![
+                            tinkernet::runtime_types::pallet_inv4::pallet::AnyId::IpfId(
+                                *multi_object,
+                            ),
+                            tinkernet::runtime_types::pallet_inv4::pallet::AnyId::IpfId(*repo_data),
+                        ],
+                        new_metadata: None,
+                    },
+                );
+
+                api.tx()
+                    .inv4()
+                    .operate_multisig(true, (ips_id, subasset_id), append_call)?
+                    .sign_and_submit_default(signer)
+                    .await?;
+            }
+        })
     }
 }
 
@@ -58,28 +240,18 @@ impl MultiObject {
     pub async fn chain_get(
         hash: String,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain: &Chain,
         ips_id: u32,
     ) -> Result<Self, Box<dyn Error>> {
-        let ips_info = chain_api
-            .storage()
-            .inv4()
-            .ip_storage(&ips_id, None)
-            .await?
-            .ok_or(format!("IPS {ips_id} does not exist"))?;
+        let ips_data = chain.ips_data(ips_id).await?;
 
-        for file in ips_info.data.0 {
-            if let AnyId::IpfId(id) = file {
-                let ipf_info = chain_api
-                    .storage()
-                    .ipf()
-                    .ipf_storage(&id, None)
-                    .await?
-                    .ok_or("Internal error: IPF listed from IPS does not exist")?;
-                if String::from_utf8(ipf_info.metadata.0.clone())? == *hash {
+        for file in ips_data {
+            if let Some(nft_id) = file.nft_id() {
+                let ipf_info = chain.nft_info(&nft_id).await?;
+                if String::from_utf8(ipf_info.metadata())? == *hash {
                     return Ok(Self::decode(
                         &mut ipfs
-                            .cat(&generate_cid(ipf_info.data.0.into())?.to_string())
+                            .cat(&ipf_info.data()?.to_string())
                             .map_ok(|c| c.to_vec())
                             .try_concat()
                             .await?
@@ -88,7 +260,7 @@ impl MultiObject {
                 }
             }
         }
-        error!("git_hash ipf not found")
+        Err("git_hash ipf not found".into())
     }
 }
 
@@ -183,8 +355,11 @@ pub struct RepoData {
 }
 
 impl RepoData {
-    pub async fn from_ipfs(ipfs_hash: H256, ipfs: &mut IpfsClient) -> Result<Self, Box<dyn Error>> {
-        let refs_cid = generate_cid(ipfs_hash)?.to_string();
+    pub async fn from_ipfs(
+        ipfs_cid: CidGeneric<32>,
+        ipfs: &mut IpfsClient,
+    ) -> Result<Self, Box<dyn Error>> {
+        let refs_cid = ipfs_cid.to_string();
         let refs_content = ipfs
             .cat(&refs_cid)
             .map_ok(|c| c.to_vec())
@@ -201,10 +376,10 @@ impl RepoData {
         force: bool,
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain: &Chain,
         signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
-    ) -> Result<u64, Box<dyn Error>> {
+    ) -> Result<NFTIdByChain, Box<dyn Error>> {
         // Deleting `ref_dst` was requested
         if ref_src.is_empty() {
             debug!("Removing ref {} from index", ref_dst);
@@ -215,7 +390,7 @@ impl RepoData {
                 );
                 debug!("Available refs:\n{:#?}", self.refs);
             }
-            error!("ref_srd empty")
+            return Err("ref_srd empty".into());
         }
         let reference = repo.find_reference(ref_src)?.resolve()?;
 
@@ -243,7 +418,7 @@ impl RepoData {
                     &mut missing_objects,
                     repo,
                     ipfs,
-                    chain_api,
+                    chain,
                     ips_id,
                 )
                 .await?;
@@ -271,8 +446,8 @@ impl RepoData {
             repo,
         )?;
 
-        let ipf_id = self
-            .push_git_objects(&objs_for_push, repo, ipfs, chain_api, signer)
+        let nft_id = self
+            .push_git_objects(&objs_for_push, repo, ipfs, chain, signer)
             .await?;
 
         for submod_oid in submodules_for_push {
@@ -282,7 +457,7 @@ impl RepoData {
 
         self.refs
             .insert(ref_dst.to_owned(), format!("{}", obj.id()));
-        Ok(ipf_id)
+        Ok(nft_id)
     }
 
     pub fn enumerate_for_push(
@@ -396,7 +571,7 @@ impl RepoData {
         ref_name: &str,
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain: &Chain,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         debug!("Fetching {} for {}", git_hash, ref_name);
@@ -404,17 +579,10 @@ impl RepoData {
         let git_hash_oid = Oid::from_str(git_hash)?;
         let mut oids_for_fetch = HashSet::new();
 
-        self.enumerate_for_fetch(
-            git_hash_oid,
-            &mut oids_for_fetch,
-            repo,
-            ipfs,
-            chain_api,
-            ips_id,
-        )
-        .await?;
+        self.enumerate_for_fetch(git_hash_oid, &mut oids_for_fetch, repo, ipfs, chain, ips_id)
+            .await?;
 
-        self.fetch_git_objects(&oids_for_fetch, repo, ipfs, chain_api, ips_id)
+        self.fetch_git_objects(&oids_for_fetch, repo, ipfs, chain, ips_id)
             .await?;
 
         match repo.odb()?.read_header(git_hash_oid)?.1 {
@@ -445,7 +613,7 @@ impl RepoData {
         fetch_todo: &mut HashSet<Oid>,
         repo: &Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain: &Chain,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         let mut stack = vec![oid];
@@ -479,7 +647,7 @@ impl RepoData {
             fetch_todo.insert(oid);
 
             let multi_object =
-                MultiObject::chain_get(multi_object_hash, ipfs, chain_api, ips_id).await?;
+                MultiObject::chain_get(multi_object_hash, ipfs, chain, ips_id).await?;
 
             match multi_object
                 .objects
@@ -518,9 +686,9 @@ impl RepoData {
         oids: &HashSet<Oid>,
         repo: &Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain: &Chain,
         signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
-    ) -> Result<u64, Box<dyn Error>> {
+    ) -> Result<NFTIdByChain, Box<dyn Error>> {
         eprintln!("Minting 2 IPFs");
 
         let mut multi_object = MultiObject {
@@ -594,30 +762,13 @@ impl RepoData {
         }
 
         debug!("Pushing MultiObject to IPFS");
-        let ipfs_hash = &Cid::try_from(ipfs.add(Cursor::new(multi_object.encode())).await?.hash)?
-            .to_bytes()[2..];
+        let cid =
+            CidGeneric::<32>::try_from(ipfs.add(Cursor::new(multi_object.encode())).await?.hash)?;
 
         debug!("Sending MultiObject to the chain");
-        let events = chain_api
-            .tx()
-            .ipf()
-            .mint(
-                multi_object.hash.as_bytes().to_vec(),
-                H256::from_slice(ipfs_hash),
-            )?
-            .sign_and_submit_then_watch_default(signer)
-            .await?
-            .wait_for_in_block()
+        let ipf_id = chain
+            .mint_nft(multi_object.hash.as_bytes().to_vec(), cid, signer)
             .await?;
-
-        let ipf_id = events
-            .fetch_events()
-            .await?
-            .find_first::<invarch::ipf::events::Minted>()?
-            .unwrap()
-            .1;
-
-        events.wait_for_success().await?;
 
         eprintln!("Minted Git Objects on-chain with IPF ID: {}", ipf_id);
 
@@ -630,7 +781,7 @@ impl RepoData {
         oids: &HashSet<Oid>,
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain: &Chain,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         let mut fetched_objects = BTreeMap::new();
@@ -642,12 +793,16 @@ impl RepoData {
             o
         };
 
+        eprintln!("past here");
+
         for object_hash in objects_deduped {
             let mut multi_object =
-                MultiObject::chain_get(object_hash.clone(), ipfs, chain_api, ips_id).await?;
+                MultiObject::chain_get(object_hash.clone(), ipfs, chain, ips_id).await?;
 
             fetched_objects.append(&mut multi_object.objects)
         }
+
+        eprintln!("past this");
 
         for (i, &oid) in oids.iter().enumerate() {
             debug!("[{}/{}] Fetching object {}", i + 1, oids.len(), oid);
@@ -691,57 +846,31 @@ impl RepoData {
     pub async fn mint_return_new_old_id(
         &self,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain: &Chain,
         signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
-    ) -> Result<(u64, Option<u64>), Box<dyn Error>> {
-        let events = chain_api
-            .tx()
-            .ipf()
-            .mint(
+    ) -> Result<(NFTIdByChain, Option<NFTIdByChain>), Box<dyn Error>> {
+        let new_nft_id = chain
+            .mint_nft(
                 b"RepoData".to_vec(),
-                H256::from_slice(
-                    &Cid::try_from(ipfs.add(Cursor::new(self.encode())).await?.hash)?.to_bytes()
-                        [2..],
-                ),
-            )?
-            .sign_and_submit_then_watch_default(signer)
-            .await?
-            .wait_for_in_block()
+                CidGeneric::<32>::try_from(ipfs.add(Cursor::new(self.encode())).await?.hash)?,
+                signer,
+            )
             .await?;
 
-        let new_ipf_id = events
-            .fetch_events()
-            .await?
-            .find_first::<invarch::ipf::events::Minted>()?
-            .unwrap()
-            .1;
+        eprintln!("Minted Repo Data on-chain with IPF ID: {}", new_nft_id);
 
-        events.wait_for_success().await?;
+        let ips_data = chain.ips_data(ips_id).await?;
 
-        eprintln!("Minted Repo Data on-chain with IPF ID: {}", new_ipf_id);
-
-        let ips_info = chain_api
-            .storage()
-            .inv4()
-            .ip_storage(&ips_id, None)
-            .await?
-            .ok_or(format!("IPS {ips_id} does not exist"))?;
-
-        for file in ips_info.data.0 {
-            if let AnyId::IpfId(id) = file {
-                let ipf_info = chain_api
-                    .storage()
-                    .ipf()
-                    .ipf_storage(&id, None)
-                    .await?
-                    .ok_or("Internal error: IPF listed from IPS does not exist")?;
-                if String::from_utf8(ipf_info.metadata.0.clone())? == *"RepoData" {
-                    return Ok((new_ipf_id, Some(id)));
+        for file in ips_data {
+            if let Some(old_nft_id) = file.nft_id() {
+                let nft_info = chain.nft_info(&old_nft_id).await?;
+                if String::from_utf8(nft_info.metadata())? == *"RepoData" {
+                    return Ok((new_nft_id, Some(old_nft_id)));
                 }
             }
         }
 
-        Ok((new_ipf_id, None))
+        Ok((new_nft_id, None))
     }
 }

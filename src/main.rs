@@ -2,13 +2,9 @@
 
 use dirs::config_dir;
 use git2::Repository;
-use invarch::runtime_types::{
-    invarch_runtime::Call, pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as IpsCall,
-};
 use ipfs_api::IpfsClient;
 use log::debug;
-use primitives::{BoxResult, Chain, Config, RepoData};
-use sp_keyring::AccountKeyring::Alice;
+use primitives::{BoxResult, Chain, Config, INV4AnyId, NFTInfo, RepoData};
 use std::{
     env::args,
     io::{self, Read, Write},
@@ -17,43 +13,30 @@ use std::{
 };
 use subxt::sp_core::Pair;
 use subxt::subxt;
-use subxt::{ClientBuilder, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
+use subxt::{DefaultConfig, PairSigner};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 mod primitives;
-mod util;
 
 #[subxt(runtime_metadata_path = "invarch_metadata.scale")]
-pub mod invarch {}
+pub mod tinkernet {}
 
-pub async fn set_repo(
-    ips_id: u32,
-    api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
-) -> BoxResult<RepoData> {
+pub async fn set_repo(ips_id: u32, chain: &Chain) -> BoxResult<RepoData> {
     let mut ipfs_client = IpfsClient::default();
-    let data = api
-        .storage()
-        .inv4()
-        .ip_storage(&ips_id, None)
-        .await?
-        .ok_or(format!("Ips {ips_id} does not exist"))?
-        .data
-        .0;
+    let data = chain.ips_data(ips_id).await?;
+
+    eprintln!("past data");
 
     for file in data {
-        if let AnyId::IpfId(id) = file {
-            let ipf_info = api
-                .storage()
-                .ipf()
-                .ipf_storage(&id, None)
-                .await?
-                .ok_or("Internal error: IPF listed from IPS does not exist")?;
-            if String::from_utf8(ipf_info.metadata.0.clone())? == *"RepoData" {
-                return RepoData::from_ipfs(ipf_info.data, &mut ipfs_client).await;
+        if let Some(nft_id) = file.nft_id() {
+            let nft_info = chain.nft_info(&nft_id).await?;
+            if String::from_utf8(nft_info.metadata())? == *"RepoData" {
+                return RepoData::from_ipfs(nft_info.data()?, &mut ipfs_client).await;
             }
         }
     }
+
     Ok(RepoData {
         refs: Default::default(),
         objects: Default::default(),
@@ -62,14 +45,14 @@ pub async fn set_repo(
 
 #[tokio::main]
 async fn main() -> BoxResult<()> {
-    let (_, raw_url) = {
+    let raw_url = {
         let mut args = args();
         args.next();
-        (
-            args.next().ok_or("Missing alias argument.")?,
-            args.next().ok_or("Missing url argument.")?,
-        )
+        args.next();
+        args.next().ok_or("Missing url argument.")?
     };
+
+    eprintln!("past raw url");
 
     let (chain_string, ips_id, subasset_id) = {
         let mut url = Path::new(&raw_url).components();
@@ -101,7 +84,7 @@ async fn main() -> BoxResult<()> {
         )
     };
 
-    let _chain = Chain::from_str(chain_string)?;
+    eprintln!("past chain string");
 
     let mut config_file_path =
         config_dir().expect("Operating system's configs directory not found");
@@ -131,15 +114,14 @@ async fn main() -> BoxResult<()> {
         c
     };
 
-    let api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>> =
-        ClientBuilder::new()
-            .set_url(config.chain_endpoint)
-            .build()
-            .await?
-            .to_runtime_api();
+    let chain = Chain::from_str(chain_string, config).await?;
 
-    let mut remote_repo = set_repo(ips_id, api.clone()).await?;
+    eprintln!("past chain");
+
+    let mut remote_repo = set_repo(ips_id, &chain).await?;
     debug!("RepoData: {:#?}", remote_repo);
+
+    eprintln!("past remote repo");
 
     loop {
         let repo = Repository::open_from_env().unwrap();
@@ -151,6 +133,8 @@ async fn main() -> BoxResult<()> {
             return Ok(());
         }
 
+        eprintln!("input: {}", &input.clone());
+
         debug!("{}", &input.clone());
 
         let mut args = input.split_ascii_whitespace();
@@ -158,7 +142,7 @@ async fn main() -> BoxResult<()> {
         match (args.next(), args.next(), args.next()) {
             (Some("push"), Some(ref_arg), None) => {
                 push(
-                    &api,
+                    &chain,
                     &mut remote_repo,
                     ips_id,
                     subasset_id,
@@ -171,7 +155,7 @@ async fn main() -> BoxResult<()> {
             (Some("fetch"), Some(sha), Some(name)) => {
                 fetch(
                     &remote_repo,
-                    &api,
+                    &chain,
                     ips_id,
                     repo,
                     IpfsClient::default(),
@@ -192,7 +176,7 @@ async fn main() -> BoxResult<()> {
 }
 
 async fn push(
-    api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    chain: &Chain,
     remote_repo: &mut RepoData,
     ips_id: u32,
     subasset_id: Option<u32>,
@@ -246,7 +230,7 @@ async fn push(
     }
 
     if credential.is_empty() {
-        error!("No credential")
+        return Err("No credential".into());
     }
 
     let signer = &PairSigner::<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>::new(
@@ -277,27 +261,19 @@ async fn push(
 
     // Upload the object tree
     match remote_repo
-        .push_ref_from_str(src, dst, force, &mut repo, &mut ipfs, api, signer, ips_id)
+        .push_ref_from_str(src, dst, force, &mut repo, &mut ipfs, chain, signer, ips_id)
         .await
     {
-        Ok(pack_ipf_id) => {
-            let (new_repo_data, old_repo_data) = remote_repo
-                .mint_return_new_old_id(&mut ipfs, api, signer, ips_id)
+        Ok(multi_object_id) => {
+            let (new_repo_data_id, old_repo_data_id) = remote_repo
+                .mint_return_new_old_id(&mut ipfs, chain, signer, ips_id)
                 .await?;
 
-            if let Some(old_id) = old_repo_data {
+            if let Some(old_id) = old_repo_data_id {
                 eprintln!("Removing old Repo Data with IPF ID: {}", old_id);
 
-                let remove_call = Call::INV4(IpsCall::remove {
-                    ips_id,
-                    assets: vec![(AnyId::IpfId(old_id), Alice.to_account_id())],
-                    new_metadata: None,
-                });
-
-                api.tx()
-                    .inv4()
-                    .operate_multisig(false, (ips_id, subasset_id), remove_call)?
-                    .sign_and_submit_default(signer)
+                chain
+                    .remove_nft(&old_id, ips_id, subasset_id, signer)
                     .await?;
             }
 
@@ -306,18 +282,13 @@ async fn push(
                 ips_id
             );
 
-            let append_call = Call::INV4(IpsCall::append {
-                ips_id,
-                assets: vec![AnyId::IpfId(pack_ipf_id), AnyId::IpfId(new_repo_data)], //ipf_id_list.into_iter().map(AnyId::IpfId).collect(),
-                new_metadata: None,
-            });
-
-            api.tx()
-                .inv4()
-                .operate_multisig(true, (ips_id, subasset_id), append_call)?
-                .sign_and_submit_then_watch_default(signer)
-                .await?
-                .wait_for_in_block()
+            chain
+                .append_nfts(
+                    (&multi_object_id, &new_repo_data_id),
+                    ips_id,
+                    subasset_id,
+                    signer,
+                )
                 .await?;
 
             eprintln!("New objects successfully appended to on-chain repository!");
@@ -335,7 +306,7 @@ async fn push(
 
 async fn fetch(
     remote_repo: &RepoData,
-    api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    chain: &Chain,
     ips_id: u32,
     mut repo: Repository,
     mut ipfs: IpfsClient,
@@ -343,7 +314,7 @@ async fn fetch(
     name: &str,
 ) -> BoxResult<()> {
     remote_repo
-        .fetch_to_ref_from_str(sha, name, &mut repo, &mut ipfs, api, ips_id)
+        .fetch_to_ref_from_str(sha, name, &mut repo, &mut ipfs, chain, ips_id)
         .await?;
 
     println!();
