@@ -29,7 +29,7 @@ pub mod invarch {}
 
 /// Finds RepoData file in IP Set and returns a `RepoData` struct created from the file.
 /// If no file, return `RepoData` struct with defaults
-pub async fn set_repo(
+pub async fn get_repo(
     ips_id: u32,
     api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
 ) -> BoxResult<RepoData> {
@@ -150,7 +150,7 @@ async fn main() -> BoxResult<()> {
             .to_runtime_api();
 
     // Get IPS RepoData
-    let mut remote_repo = set_repo(ips_id, api.clone()).await?;
+    let mut remote_repo = get_repo(ips_id, api.clone()).await?;
     debug!("RepoData: {:#?}", remote_repo);
 
     loop {
