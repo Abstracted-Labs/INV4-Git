@@ -27,7 +27,7 @@ mod util;
 #[subxt(runtime_metadata_path = "invarch_metadata.scale")]
 pub mod invarch {}
 
-/// Finds RepoData file in IP Set and returns a `RepoData` struct created from the file.
+/// Gets Repo Data file from IP Set and returns a `RepoData` struct created from the file.
 /// If no file, return `RepoData` struct with defaults
 pub async fn get_repo(
     ips_id: u32,
@@ -213,6 +213,7 @@ async fn push(
     mut ipfs: IpfsClient,
     ref_arg: &str,
 ) -> BoxResult<()> {
+    // Requesting credentials from the user in the terminal
     let mut cmd = Command::new("git");
     cmd.arg("credential");
     cmd.arg("fill");
@@ -262,6 +263,7 @@ async fn push(
         error!("No credential")
     }
 
+    // Generate key pair from command line entered seed phrase
     let signer = &PairSigner::<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>::new(
         sp_keyring::sr25519::sr25519::Pair::from_string(&credential, None).unwrap(),
     );
@@ -298,6 +300,7 @@ async fn push(
                 .mint_return_new_old_id(&mut ipfs, api, signer, ips_id)
                 .await?;
 
+            // If IP Set has a pre-existing RepoData file, remove it from the IP Set
             if let Some(old_id) = old_repo_data {
                 eprintln!("Removing old Repo Data with IPF ID: {}", old_id);
 
@@ -307,6 +310,7 @@ async fn push(
                     new_metadata: None,
                 });
 
+                // Sign and submit the `remove_call` extrinsic to remove the old RepoData IPF from the IPS
                 api.tx()
                     .inv4()
                     .operate_multisig(false, (ips_id, subasset_id), remove_call)?
@@ -325,6 +329,7 @@ async fn push(
                 new_metadata: None,
             });
 
+            // Sign and submit the `append_call` extrinsic to add the new RepoData IPF to the IPS
             api.tx()
                 .inv4()
                 .operate_multisig(true, (ips_id, subasset_id), append_call)?

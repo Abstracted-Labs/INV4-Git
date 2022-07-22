@@ -28,6 +28,7 @@ pub static SUBMODULE_TIP_MARKER: &str = "submodule-tip";
 
 pub type BoxResult<T> = Result<T, Box<dyn Error>>;
 
+/// Holds all git objects in a given repository???
 #[derive(Clone, Debug, Encode, Decode)]
 pub struct MultiObject {
     pub hash: String,
@@ -79,6 +80,8 @@ impl MultiObject {
     }
 }
 
+/// Represents a git object. Types are Commit, Tag, Tree, & Blob
+/// Ex in filesystem: .git/objects/4b/62c9e0f3c6550c17af27daa0b24a194e113374
 #[derive(Clone, Debug, Encode, Decode)]
 pub struct GitObject {
     /// The git hash of the underlying git object
@@ -89,18 +92,19 @@ pub struct GitObject {
     pub metadata: GitObjectMetadata,
 }
 
+// Valid git object types
 #[derive(Clone, Debug, Encode, Decode)]
 pub enum GitObjectMetadata {
-    #[allow(missing_docs)]
+    /// References tree and its parent commit
     Commit {
         parent_git_hashes: BTreeSet<String>,
         tree_git_hash: String,
     },
-    #[allow(missing_docs)]
+    /// References a specific commit
     Tag { target_git_hash: String },
-    #[allow(missing_docs)]
+    /// References blobs and/or other trees
     Tree { entry_git_hashes: BTreeSet<String> },
-    #[allow(missing_docs)]
+    /// The actual files of the repo i.e. .html, .js, .pdf, etc.
     Blob,
 }
 
@@ -161,11 +165,13 @@ impl GitObject {
     }
 }
 
+/// Top level repository data
 #[derive(Encode, Decode, Debug, Clone)]
 pub struct RepoData {
-    /// All refs this repository knows; a {name -> sha1} map
+    /// All refs this repository knows; a {branch name -> sha1 (commit hash???)} map
+    /// i.e. branches
     pub refs: BTreeMap<String, String>,
-    /// All objects this repository contains; a {sha1 -> MultiObject hash} map
+    /// All objects this repository contains; a {sha1 (commit hash???) -> MultiObject hash} map
     pub objects: BTreeMap<String, String>,
 }
 
@@ -581,6 +587,8 @@ impl RepoData {
         }
 
         debug!("Pushing MultiObject to IPFS");
+        // Actually push data to IPFS and get the unique hash back
+        // First 2 bytes are multihash metadata and are excluded b/c not part of the actual hash (digest)
         let ipfs_hash = &Cid::try_from(ipfs.add(Cursor::new(multi_object.encode())).await?.hash)?
             .to_bytes()[2..];
 
@@ -682,6 +690,7 @@ impl RepoData {
         signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
     ) -> Result<(u64, Option<u64>), Box<dyn Error>> {
+        // Mint `RepoData` instance as a new IPF
         let events = chain_api
             .tx()
             .ipf()
@@ -697,6 +706,7 @@ impl RepoData {
             .wait_for_in_block()
             .await?;
 
+        // Get ID of new IPF just minted
         let new_ipf_id = events
             .fetch_events()
             .await?
@@ -708,6 +718,7 @@ impl RepoData {
 
         eprintln!("Minted Repo Data on-chain with IPF ID: {}", new_ipf_id);
 
+        // Get IPS info
         let ips_info = chain_api
             .storage()
             .inv4()
@@ -715,6 +726,7 @@ impl RepoData {
             .await?
             .ok_or(format!("IPS {ips_id} does not exist"))?;
 
+        // Check if IPS has a pre-existing RepoData file
         for file in ips_info.data.0 {
             if let AnyId::IpfId(id) = file {
                 let ipf_info = chain_api
@@ -729,6 +741,7 @@ impl RepoData {
             }
         }
 
+        // IPS doesn't have a pre-existing RepoData file
         Ok((new_ipf_id, None))
     }
 }
