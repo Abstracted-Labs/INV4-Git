@@ -171,7 +171,7 @@ pub struct RepoData {
     /// All refs this repository knows; a {branch name -> sha1 (git hash)} map
     /// i.e. branches
     pub refs: BTreeMap<String, String>,
-    /// All objects this repository contains; a {sha1 (commit hash???) -> MultiObject hash} map
+    /// All objects this repository contains; a {sha1 (git hash) -> MultiObject hash} map
     pub objects: BTreeMap<String, String>,
 }
 
