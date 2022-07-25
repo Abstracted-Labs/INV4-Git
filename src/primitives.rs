@@ -28,7 +28,7 @@ pub static SUBMODULE_TIP_MARKER: &str = "submodule-tip";
 
 pub type BoxResult<T> = Result<T, Box<dyn Error>>;
 
-/// Holds all git objects in a given repository???
+/// Holds multiple git objects in a single struct
 #[derive(Clone, Debug, Encode, Decode)]
 pub struct MultiObject {
     pub hash: String,
@@ -92,7 +92,7 @@ pub struct GitObject {
     pub metadata: GitObjectMetadata,
 }
 
-// Valid git object types
+// Object metadata, necessary for finding other objects they reference
 #[derive(Clone, Debug, Encode, Decode)]
 pub enum GitObjectMetadata {
     /// References tree and its parent commit
@@ -168,10 +168,10 @@ impl GitObject {
 /// Top level repository data
 #[derive(Encode, Decode, Debug, Clone)]
 pub struct RepoData {
-    /// All refs this repository knows; a {branch name -> sha1 (commit hash???)} map
+    /// All refs this repository knows; a {branch name -> sha1 (git hash)} map
     /// i.e. branches
     pub refs: BTreeMap<String, String>,
-    /// All objects this repository contains; a {sha1 (commit hash???) -> MultiObject hash} map
+    /// All objects this repository contains; a {sha1 (git hash) -> MultiObject hash} map
     pub objects: BTreeMap<String, String>,
 }
 

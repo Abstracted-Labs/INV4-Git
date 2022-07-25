@@ -71,8 +71,6 @@ pub async fn get_repo(
 /// Git will call this helper program because it does not natively support git-remote-inv4
 #[tokio::main]
 async fn main() -> BoxResult<()> {
-    // Setup config file
-
     // Get URL passed from Git.
     let (_, raw_url) = {
         let mut args = args();
@@ -330,7 +328,7 @@ async fn push(
                 new_metadata: None,
             });
 
-            // Sign and submit the `append_call` extrinsic to add the new RepoData IPF to the IPS
+            // Sign and submit the `append_call` extrinsic to add the new RepoData IPF and the new MultiObject to the IPS
             api.tx()
                 .inv4()
                 .operate_multisig(true, (ips_id, subasset_id), append_call)?
