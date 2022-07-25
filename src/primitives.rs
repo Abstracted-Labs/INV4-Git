@@ -176,6 +176,7 @@ pub struct RepoData {
 }
 
 impl RepoData {
+    /// Get the serialized RepoData file from IPFS and deserialize it, returning a `RepoData` struct
     pub async fn from_ipfs(ipfs_hash: H256, ipfs: &mut IpfsClient) -> Result<Self, Box<dyn Error>> {
         let refs_cid = generate_cid(ipfs_hash)?.to_string();
         let refs_content = ipfs
