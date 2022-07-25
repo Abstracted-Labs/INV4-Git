@@ -296,6 +296,7 @@ async fn push(
         .await
     {
         Ok(pack_ipf_id) => {
+            // Get IPF ID's for new and potential old RepoData files
             let (new_repo_data, old_repo_data) = remote_repo
                 .mint_return_new_old_id(&mut ipfs, api, signer, ips_id)
                 .await?;

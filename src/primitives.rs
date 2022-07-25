@@ -683,6 +683,8 @@ impl RepoData {
         Ok(())
     }
 
+    /// Mint new/updated RepoData file. 
+    /// Returns IPF ID of new file and Option holding ID of potential pre-existing file
     pub async fn mint_return_new_old_id(
         &self,
         ipfs: &mut IpfsClient,
