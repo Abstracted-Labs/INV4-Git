@@ -92,7 +92,7 @@ pub struct GitObject {
     pub metadata: GitObjectMetadata,
 }
 
-// Valid git object types
+// Object metadata, necessary for finding other objects they reference
 #[derive(Clone, Debug, Encode, Decode)]
 pub enum GitObjectMetadata {
     /// References tree and its parent commit
