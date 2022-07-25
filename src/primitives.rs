@@ -28,7 +28,7 @@ pub static SUBMODULE_TIP_MARKER: &str = "submodule-tip";
 
 pub type BoxResult<T> = Result<T, Box<dyn Error>>;
 
-/// Holds all git objects in a given repository???
+/// Holds multiple git objects in a single struct
 #[derive(Clone, Debug, Encode, Decode)]
 pub struct MultiObject {
     pub hash: String,
