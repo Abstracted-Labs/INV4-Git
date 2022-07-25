@@ -327,7 +327,7 @@ async fn push(
                 new_metadata: None,
             });
 
-            // Sign and submit the `append_call` extrinsic to add the new RepoData IPF to the IPS
+            // Sign and submit the `append_call` extrinsic to add the new RepoData IPF and the new MultiObject to the IPS
             api.tx()
                 .inv4()
                 .operate_multisig(true, (ips_id, subasset_id), append_call)?
