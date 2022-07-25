@@ -71,8 +71,6 @@ pub async fn get_repo(
 /// Git will call this helper program because it does not natively support git-remote-inv4
 #[tokio::main]
 async fn main() -> BoxResult<()> {
-    // Setup config file
-
     // Get URL passed from Git.
     let (_, raw_url) = {
         let mut args = args();
