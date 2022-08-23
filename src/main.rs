@@ -27,26 +27,32 @@ mod util;
 #[subxt(runtime_metadata_path = "invarch_metadata.scale")]
 pub mod invarch {}
 
-pub async fn set_repo(
+/// Gets Repo Data file from IP Set and returns a `RepoData` struct created from the file.
+/// If no file, return `RepoData` struct with defaults
+pub async fn get_repo(
     ips_id: u32,
     api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
 ) -> BoxResult<RepoData> {
+    // Setup IPFS client
     let mut ipfs_client = IpfsClient::default();
+
+    // Get assets (IPFs, NFTs, nested IPS, NFT collections) under `ips_id` IP Set
     let data = api
         .storage()
-        .inv4()
-        .ip_storage(&ips_id, None)
+        .inv4() // pallet
+        .ip_storage(&ips_id, None) // storage entity
         .await?
         .ok_or(format!("Ips {ips_id} does not exist"))?
         .data
         .0;
 
+    // Find "RepoData" IPF and return `RepoData` struct if it exists
     for file in data {
         if let AnyId::IpfId(id) = file {
             let ipf_info = api
                 .storage()
-                .ipf()
-                .ipf_storage(&id, None)
+                .ipf() // pallet
+                .ipf_storage(&id, None) // storage entity
                 .await?
                 .ok_or("Internal error: IPF listed from IPS does not exist")?;
             if String::from_utf8(ipf_info.metadata.0.clone())? == *"RepoData" {
@@ -54,14 +60,18 @@ pub async fn set_repo(
             }
         }
     }
+
+    // Return default `RepoData` if file doesn't exist
     Ok(RepoData {
         refs: Default::default(),
         objects: Default::default(),
     })
 }
 
+/// Git will call this helper program because it does not natively support git-remote-inv4
 #[tokio::main]
 async fn main() -> BoxResult<()> {
+    // Get URL passed from Git.
     let (_, raw_url) = {
         let mut args = args();
         args.next();
@@ -71,16 +81,19 @@ async fn main() -> BoxResult<()> {
         )
     };
 
+    // Parse `ips_id` and sub token ID (optional) from URL
     let (ips_id, subasset_id) = {
         let mut url = Path::new(&raw_url).components();
         url.next();
         (
+            // Get IPS ID
             url.next()
                 .ok_or("Missing IPS id. Expected: 'inv4://>ips_id<'")?
                 .as_os_str()
                 .to_str()
                 .ok_or("Input was not UTF-8")?
                 .parse::<u32>()?,
+            // Get optional sub token ID
             if let Some(component) = url.next() {
                 Some(
                     component
@@ -101,7 +114,9 @@ async fn main() -> BoxResult<()> {
 
     std::fs::create_dir_all(config_file_path.parent().unwrap()).unwrap();
 
+    // Deserialize `config.toml` into `Config` struct
     let config: Config = if config_file_path.exists() {
+        // Read contents of config.toml file into `contents` buffer
         let mut contents = String::new();
         std::fs::File::options()
             .write(true)
@@ -112,6 +127,7 @@ async fn main() -> BoxResult<()> {
 
         toml::from_str(&contents)?
     } else {
+        // Default Substrate RPC server address
         let c = Config {
             chain_endpoint: String::from("ws://127.0.0.1:9944"),
         };
@@ -123,6 +139,7 @@ async fn main() -> BoxResult<()> {
         c
     };
 
+    // Create subxt client connected to specified chain
     let api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>> =
         ClientBuilder::new()
             .set_url(config.chain_endpoint)
@@ -130,12 +147,14 @@ async fn main() -> BoxResult<()> {
             .await?
             .to_runtime_api();
 
-    let mut remote_repo = set_repo(ips_id, api.clone()).await?;
+    // Get IPS RepoData
+    let mut remote_repo = get_repo(ips_id, api.clone()).await?;
     debug!("RepoData: {:#?}", remote_repo);
 
     loop {
         let repo = Repository::open_from_env().unwrap();
 
+        // Read next input command
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
 
@@ -192,6 +211,7 @@ async fn push(
     mut ipfs: IpfsClient,
     ref_arg: &str,
 ) -> BoxResult<()> {
+    // Requesting credentials from the user in the terminal
     let mut cmd = Command::new("git");
     cmd.arg("credential");
     cmd.arg("fill");
@@ -241,6 +261,7 @@ async fn push(
         error!("No credential")
     }
 
+    // Generate key pair from command line entered seed phrase
     let signer = &PairSigner::<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>::new(
         sp_keyring::sr25519::sr25519::Pair::from_string(&credential, None).unwrap(),
     );
@@ -273,10 +294,12 @@ async fn push(
         .await
     {
         Ok(pack_ipf_id) => {
+            // Get IPF ID's for new and potential old RepoData files
             let (new_repo_data, old_repo_data) = remote_repo
                 .mint_return_new_old_id(&mut ipfs, api, signer, ips_id)
                 .await?;
 
+            // If IP Set has a pre-existing RepoData file, remove it from the IP Set
             if let Some(old_id) = old_repo_data {
                 eprintln!("Removing old Repo Data with IPF ID: {}", old_id);
 
@@ -286,6 +309,7 @@ async fn push(
                     new_metadata: None,
                 });
 
+                // Sign and submit the `remove_call` extrinsic to remove the old RepoData IPF from the IPS
                 api.tx()
                     .inv4()
                     .operate_multisig(false, (ips_id, subasset_id), remove_call)?
@@ -304,6 +328,7 @@ async fn push(
                 new_metadata: None,
             });
 
+            // Sign and submit the `append_call` extrinsic to add the new RepoData IPF and the new MultiObject to the IPS
             api.tx()
                 .inv4()
                 .operate_multisig(true, (ips_id, subasset_id), append_call)?
