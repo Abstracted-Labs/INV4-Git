@@ -12,11 +12,11 @@ use std::{
     path::Path,
     process::Stdio,
 };
-use subxt::sp_core::Pair;
 use subxt::subxt;
-use subxt::{ClientBuilder, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
+use subxt::{ext::sp_core::Pair, tx::PairSigner};
+use subxt::{OnlineClient, PolkadotConfig};
 use tinkernet::runtime_types::{
-    pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as IpsCall, tinkernet_runtime::Call,
+    pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as INV4Call, tinkernet_runtime::Call,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -27,26 +27,25 @@ mod util;
 #[subxt(runtime_metadata_path = "tinkernet_metadata.scale")]
 pub mod tinkernet {}
 
-pub async fn set_repo(
-    ips_id: u32,
-    api: tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
-) -> BoxResult<RepoData> {
+pub async fn set_repo(ips_id: u32, api: OnlineClient<PolkadotConfig>) -> BoxResult<RepoData> {
     let mut ipfs_client = IpfsClient::default();
+    let ips_storage_address = tinkernet::storage().inv4().ip_storage(&ips_id);
+
     let data = api
         .storage()
-        .inv4()
-        .ip_storage(&ips_id, None)
+        .fetch(&ips_storage_address, None)
         .await?
-        .ok_or(format!("Ips {ips_id} does not exist"))?
+        .unwrap()
         .data
         .0;
 
     for file in data {
         if let AnyId::IpfId(id) = file {
+            let ipf_storage_address = tinkernet::storage().ipf().ipf_storage(&id);
+
             let ipf_info = api
                 .storage()
-                .ipf()
-                .ipf_storage(&id, None)
+                .fetch(&ipf_storage_address, None)
                 .await?
                 .ok_or("Internal error: IPF listed from IPS does not exist")?;
             if String::from_utf8(ipf_info.metadata.0.clone())? == *"RepoData" {
@@ -123,12 +122,7 @@ async fn main() -> BoxResult<()> {
         c
     };
 
-    let api: tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>> =
-        ClientBuilder::new()
-            .set_url(config.chain_endpoint)
-            .build()
-            .await?
-            .to_runtime_api();
+    let api = OnlineClient::<PolkadotConfig>::from_url(config.chain_endpoint).await?;
 
     let mut remote_repo = set_repo(ips_id, api.clone()).await?;
     debug!("RepoData: {:#?}", remote_repo);
@@ -184,7 +178,7 @@ async fn main() -> BoxResult<()> {
 }
 
 async fn push(
-    api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    api: &OnlineClient<PolkadotConfig>,
     remote_repo: &mut RepoData,
     ips_id: u32,
     subasset_id: Option<u32>,
@@ -241,7 +235,7 @@ async fn push(
         error!("No credential")
     }
 
-    let signer = &PairSigner::<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>::new(
+    let signer = PairSigner::new(
         sp_keyring::sr25519::sr25519::Pair::from_string(&credential, None).unwrap(),
     );
 
@@ -269,27 +263,31 @@ async fn push(
 
     // Upload the object tree
     match remote_repo
-        .push_ref_from_str(src, dst, force, &mut repo, &mut ipfs, api, signer, ips_id)
+        .push_ref_from_str(src, dst, force, &mut repo, &mut ipfs, api, &signer, ips_id)
         .await
     {
         Ok(pack_ipf_id) => {
             let (new_repo_data, old_repo_data) = remote_repo
-                .mint_return_new_old_id(&mut ipfs, api, signer, ips_id)
+                .mint_return_new_old_id(&mut ipfs, api, &signer, ips_id)
                 .await?;
 
             if let Some(old_id) = old_repo_data {
                 eprintln!("Removing old Repo Data with IPF ID: {}", old_id);
 
-                let remove_call = Call::INV4(IpsCall::remove {
+                let remove_call = Call::INV4(INV4Call::remove {
                     ips_id,
                     assets: vec![(AnyId::IpfId(old_id), Alice.to_account_id())],
                     new_metadata: None,
                 });
 
+                let multisig_remove_tx = tinkernet::tx().inv4().operate_multisig(
+                    false,
+                    (ips_id, subasset_id),
+                    remove_call,
+                );
+
                 api.tx()
-                    .inv4()
-                    .operate_multisig(false, (ips_id, subasset_id), remove_call)?
-                    .sign_and_submit_default(signer)
+                    .sign_and_submit_default(&multisig_remove_tx, &signer)
                     .await?;
             }
 
@@ -298,16 +296,19 @@ async fn push(
                 ips_id
             );
 
-            let append_call = Call::INV4(IpsCall::append {
+            let append_call = Call::INV4(INV4Call::append {
                 ips_id,
                 assets: vec![AnyId::IpfId(pack_ipf_id), AnyId::IpfId(new_repo_data)], //ipf_id_list.into_iter().map(AnyId::IpfId).collect(),
                 new_metadata: None,
             });
 
+            let multisig_append_tx =
+                tinkernet::tx()
+                    .inv4()
+                    .operate_multisig(true, (ips_id, subasset_id), append_call);
+
             api.tx()
-                .inv4()
-                .operate_multisig(true, (ips_id, subasset_id), append_call)?
-                .sign_and_submit_then_watch_default(signer)
+                .sign_and_submit_then_watch_default(&multisig_append_tx, &signer)
                 .await?
                 .wait_for_in_block()
                 .await?;
@@ -327,7 +328,7 @@ async fn push(
 
 async fn fetch(
     remote_repo: &RepoData,
-    api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    api: &OnlineClient<PolkadotConfig>,
     ips_id: u32,
     mut repo: Repository,
     mut ipfs: IpfsClient,

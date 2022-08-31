@@ -5,28 +5,28 @@ edition = "2021"
 
 [dependencies]
 sp-keyring = "6.0.0"
-ipfs-api = "0.15.0"
-cid = "0.8.5"
+ipfs-api = "0.16.0"
+cid = "0.8.6"
 hex = "0.4.3"
-futures = "0.3.21"
+futures = "0.3.24"
 temp-dir = "0.1.11"
-git2 = "0.14.4"
+git2 = "0.15.0"
 log = "0.4.17"
 dirs = "4.0.0"
-serde = "1.0.139"
+serde = "1.0.144"
 toml = "0.5.9"
 twox-hash = "1.6.3"
 
 [dependencies.tokio]
-version = "1.19.1"
+version = "1.20.1"
 features = ["macros", "rt-multi-thread", "process", "io-std"]
 
 [dependencies.subxt]
 git = "https://github.com/paritytech/subxt"
-rev = "c55b7ba3e34118f61dc51499a0b38262c513aec4"
+rev = "599107b4322d2b959e26d9cf5269bc1ed4375a8c"
 
 [dependencies.codec]
 package = "parity-scale-codec"
-version = "3.1.2"
+version = "3.1.5"
 default-features = false
 features = ["derive", "full", "bit-vec"]

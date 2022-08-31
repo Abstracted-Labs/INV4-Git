@@ -15,7 +15,7 @@ use std::{
     error::Error,
     io::Cursor,
 };
-use subxt::{sp_core::H256, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
+use subxt::{ext::sp_core::H256, tx::PairSigner, OnlineClient, PolkadotConfig};
 use twox_hash::xxh3;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -45,24 +45,27 @@ impl MultiObject {
     pub async fn chain_get(
         hash: String,
         ipfs: &mut IpfsClient,
-        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &OnlineClient<PolkadotConfig>,
         ips_id: u32,
     ) -> Result<Self, Box<dyn Error>> {
+        let ips_info_address = tinkernet::storage().inv4().ip_storage(&ips_id);
+
         let ips_info = chain_api
             .storage()
-            .inv4()
-            .ip_storage(&ips_id, None)
+            .fetch(&ips_info_address, None)
             .await?
             .ok_or(format!("IPS {ips_id} does not exist"))?;
 
         for file in ips_info.data.0 {
             if let AnyId::IpfId(id) = file {
+                let ipf_info_address = tinkernet::storage().ipf().ipf_storage(&id);
+
                 let ipf_info = chain_api
                     .storage()
-                    .ipf()
-                    .ipf_storage(&id, None)
+                    .fetch(&ipf_info_address, None)
                     .await?
                     .ok_or("Internal error: IPF listed from IPS does not exist")?;
+
                 if String::from_utf8(ipf_info.metadata.0.clone())? == *hash {
                     return Ok(Self::decode(
                         &mut ipfs
@@ -188,8 +191,8 @@ impl RepoData {
         force: bool,
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
-        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
+        chain_api: &OnlineClient<PolkadotConfig>,
+        signer: &PairSigner<PolkadotConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
     ) -> Result<u64, Box<dyn Error>> {
         // Deleting `ref_dst` was requested
@@ -383,7 +386,7 @@ impl RepoData {
         ref_name: &str,
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &OnlineClient<PolkadotConfig>,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         debug!("Fetching {} for {}", git_hash, ref_name);
@@ -432,10 +435,11 @@ impl RepoData {
         fetch_todo: &mut HashSet<Oid>,
         repo: &Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &OnlineClient<PolkadotConfig>,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         let mut stack = vec![oid];
+        let mut multi_objects: BTreeMap<String, MultiObject> = BTreeMap::new();
 
         while let Some(oid) = stack.pop() {
             if repo.odb()?.read_header(oid).is_ok() {
@@ -465,8 +469,14 @@ impl RepoData {
 
             fetch_todo.insert(oid);
 
-            let multi_object =
-                MultiObject::chain_get(multi_object_hash, ipfs, chain_api, ips_id).await?;
+            let multi_object = if let Some(m) = multi_objects.get(&multi_object_hash) {
+                m.clone()
+            } else {
+                let m = MultiObject::chain_get(multi_object_hash.clone(), ipfs, chain_api, ips_id)
+                    .await?;
+                multi_objects.insert(multi_object_hash, m.clone());
+                m
+            };
 
             match multi_object
                 .objects
@@ -505,8 +515,8 @@ impl RepoData {
         oids: &HashSet<Oid>,
         repo: &Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
-        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
+        chain_api: &OnlineClient<PolkadotConfig>,
+        signer: &PairSigner<PolkadotConfig, sp_keyring::sr25519::sr25519::Pair>,
     ) -> Result<u64, Box<dyn Error>> {
         eprintln!("Minting 2 IPFs");
 
@@ -585,14 +595,15 @@ impl RepoData {
             .to_bytes()[2..];
 
         debug!("Sending MultiObject to the chain");
+
+        let ipf_mint_tx = tinkernet::tx().ipf().mint(
+            multi_object.hash.as_bytes().to_vec(),
+            H256::from_slice(ipfs_hash),
+        );
+
         let events = chain_api
             .tx()
-            .ipf()
-            .mint(
-                multi_object.hash.as_bytes().to_vec(),
-                H256::from_slice(ipfs_hash),
-            )?
-            .sign_and_submit_then_watch_default(signer)
+            .sign_and_submit_then_watch_default(&ipf_mint_tx, signer)
             .await?
             .wait_for_in_block()
             .await?;
@@ -617,7 +628,7 @@ impl RepoData {
         oids: &HashSet<Oid>,
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &OnlineClient<PolkadotConfig>,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         let mut fetched_objects = BTreeMap::new();
@@ -678,21 +689,20 @@ impl RepoData {
     pub async fn mint_return_new_old_id(
         &self,
         ipfs: &mut IpfsClient,
-        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
-        signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
+        chain_api: &OnlineClient<PolkadotConfig>,
+        signer: &PairSigner<PolkadotConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
     ) -> Result<(u64, Option<u64>), Box<dyn Error>> {
+        let ipf_mint_tx = tinkernet::tx().ipf().mint(
+            b"RepoData".to_vec(),
+            H256::from_slice(
+                &Cid::try_from(ipfs.add(Cursor::new(self.encode())).await?.hash)?.to_bytes()[2..],
+            ),
+        );
+
         let events = chain_api
             .tx()
-            .ipf()
-            .mint(
-                b"RepoData".to_vec(),
-                H256::from_slice(
-                    &Cid::try_from(ipfs.add(Cursor::new(self.encode())).await?.hash)?.to_bytes()
-                        [2..],
-                ),
-            )?
-            .sign_and_submit_then_watch_default(signer)
+            .sign_and_submit_then_watch_default(&ipf_mint_tx, signer)
             .await?
             .wait_for_in_block()
             .await?;
@@ -708,21 +718,24 @@ impl RepoData {
 
         eprintln!("Minted Repo Data on-chain with IPF ID: {}", new_ipf_id);
 
+        let ips_info_address = tinkernet::storage().inv4().ip_storage(&ips_id);
+
         let ips_info = chain_api
             .storage()
-            .inv4()
-            .ip_storage(&ips_id, None)
+            .fetch(&ips_info_address, None)
             .await?
             .ok_or(format!("IPS {ips_id} does not exist"))?;
 
         for file in ips_info.data.0 {
             if let AnyId::IpfId(id) = file {
+                let ipf_info_address = tinkernet::storage().ipf().ipf_storage(&id);
+
                 let ipf_info = chain_api
                     .storage()
-                    .ipf()
-                    .ipf_storage(&id, None)
+                    .fetch(&ipf_info_address, None)
                     .await?
                     .ok_or("Internal error: IPF listed from IPS does not exist")?;
+
                 if String::from_utf8(ipf_info.metadata.0.clone())? == *"RepoData" {
                     return Ok((new_ipf_id, Some(id)));
                 }

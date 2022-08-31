@@ -1,5 +1,5 @@
 use cid::{multihash::MultihashGeneric, CidGeneric};
-use subxt::sp_core::H256;
+use subxt::ext::sp_core::H256;
 
 use crate::primitives::BoxResult;
 
