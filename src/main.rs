@@ -2,9 +2,6 @@
 
 use dirs::config_dir;
 use git2::Repository;
-use invarch::runtime_types::{
-    invarch_runtime::Call, pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as IpsCall,
-};
 use ipfs_api::IpfsClient;
 use log::debug;
 use primitives::{BoxResult, Config, RepoData};
@@ -18,18 +15,21 @@ use std::{
 use subxt::sp_core::Pair;
 use subxt::subxt;
 use subxt::{ClientBuilder, DefaultConfig, PairSigner, PolkadotExtrinsicParams};
+use tinkernet::runtime_types::{
+    pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as IpsCall, tinkernet_runtime::Call,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 mod primitives;
 mod util;
 
-#[subxt(runtime_metadata_path = "invarch_metadata.scale")]
-pub mod invarch {}
+#[subxt(runtime_metadata_path = "tinkernet_metadata.scale")]
+pub mod tinkernet {}
 
 pub async fn set_repo(
     ips_id: u32,
-    api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    api: tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
 ) -> BoxResult<RepoData> {
     let mut ipfs_client = IpfsClient::default();
     let data = api
@@ -123,7 +123,7 @@ async fn main() -> BoxResult<()> {
         c
     };
 
-    let api: invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>> =
+    let api: tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>> =
         ClientBuilder::new()
             .set_url(config.chain_endpoint)
             .build()
@@ -184,7 +184,7 @@ async fn main() -> BoxResult<()> {
 }
 
 async fn push(
-    api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
     remote_repo: &mut RepoData,
     ips_id: u32,
     subasset_id: Option<u32>,
@@ -327,7 +327,7 @@ async fn push(
 
 async fn fetch(
     remote_repo: &RepoData,
-    api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+    api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
     ips_id: u32,
     mut repo: Repository,
     mut ipfs: IpfsClient,

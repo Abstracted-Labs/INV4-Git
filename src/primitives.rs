@@ -1,6 +1,6 @@
 use crate::{
     error,
-    invarch::{self, runtime_types::pallet_inv4::pallet::AnyId},
+    tinkernet::{self, runtime_types::pallet_inv4::pallet::AnyId},
     util::generate_cid,
 };
 use cid::Cid;
@@ -45,7 +45,7 @@ impl MultiObject {
     pub async fn chain_get(
         hash: String,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         ips_id: u32,
     ) -> Result<Self, Box<dyn Error>> {
         let ips_info = chain_api
@@ -188,7 +188,7 @@ impl RepoData {
         force: bool,
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
     ) -> Result<u64, Box<dyn Error>> {
@@ -383,7 +383,7 @@ impl RepoData {
         ref_name: &str,
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         debug!("Fetching {} for {}", git_hash, ref_name);
@@ -432,7 +432,7 @@ impl RepoData {
         fetch_todo: &mut HashSet<Oid>,
         repo: &Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         let mut stack = vec![oid];
@@ -505,7 +505,7 @@ impl RepoData {
         oids: &HashSet<Oid>,
         repo: &Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
     ) -> Result<u64, Box<dyn Error>> {
         eprintln!("Minting 2 IPFs");
@@ -600,7 +600,7 @@ impl RepoData {
         let ipf_id = events
             .fetch_events()
             .await?
-            .find_first::<invarch::ipf::events::Minted>()?
+            .find_first::<tinkernet::ipf::events::Minted>()?
             .unwrap()
             .1;
 
@@ -617,7 +617,7 @@ impl RepoData {
         oids: &HashSet<Oid>,
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         ips_id: u32,
     ) -> Result<(), Box<dyn Error>> {
         let mut fetched_objects = BTreeMap::new();
@@ -678,7 +678,7 @@ impl RepoData {
     pub async fn mint_return_new_old_id(
         &self,
         ipfs: &mut IpfsClient,
-        chain_api: &invarch::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
+        chain_api: &tinkernet::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>,
         signer: &PairSigner<DefaultConfig, sp_keyring::sr25519::sr25519::Pair>,
         ips_id: u32,
     ) -> Result<(u64, Option<u64>), Box<dyn Error>> {
@@ -700,7 +700,7 @@ impl RepoData {
         let new_ipf_id = events
             .fetch_events()
             .await?
-            .find_first::<invarch::ipf::events::Minted>()?
+            .find_first::<tinkernet::ipf::events::Minted>()?
             .unwrap()
             .1;
 
