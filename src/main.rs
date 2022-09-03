@@ -5,14 +5,13 @@ use git2::Repository;
 use ipfs_api::IpfsClient;
 use log::debug;
 use primitives::{BoxResult, Config, RepoData};
-use sp_keyring::AccountKeyring::Alice;
 use std::{
     env::args,
     io::{self, Read, Write},
     path::Path,
     process::Stdio,
 };
-use subxt::subxt;
+use subxt::{ext::sp_core::sr25519::Pair as Sr25519Pair, subxt};
 use subxt::{ext::sp_core::Pair, tx::PairSigner};
 use subxt::{OnlineClient, PolkadotConfig};
 use tinkernet::runtime_types::{
@@ -214,30 +213,62 @@ async fn push(
             .expect("child process encountered an error");
     });
 
+    // We use https://inv4-<chain> instead of inv4://<chain> because some credential helpers won't store unknown protocol credentials (e.g. osxkeychain)
     stdin
-        .write_all("protocol=inv4\nhost=\nusername= \n\n".as_bytes())
+        .write_all("protocol=https\nhost=inv4-tinkernet\n\n".as_bytes())
         .await
         .expect("could not write to stdin");
 
-    eprintln!("Seed Phrase or Private Key ↓");
+    eprintln!("Enter any username and then for password, seed phrase or private key ↓");
 
     drop(stdin);
 
-    let mut credential = String::new();
+    let mut username = String::new();
+    let mut password = String::new();
 
     while let Some(line) = out_reader.next_line().await? {
+        if line.trim().starts_with("username=") {
+            username = line.trim_start_matches("username=").to_string();
+        }
         if line.trim().starts_with("password=") {
-            credential = line.trim_start_matches("password=").to_string();
+            password = line.trim_start_matches("password=").to_string();
         }
     }
 
-    if credential.is_empty() {
-        error!("No credential")
-    }
+    let pair = Sr25519Pair::from_string(&password, None).expect("Invalid credentials");
+    let signer = PairSigner::new(pair);
 
-    let signer = PairSigner::new(
-        sp_keyring::sr25519::sr25519::Pair::from_string(&credential, None).unwrap(),
-    );
+    let mut cmd = Command::new("git");
+    cmd.arg("credential");
+    cmd.arg("approve");
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+
+    let mut child = cmd.spawn().expect("failed to spawn command");
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .expect("child did not have a handle to stdin");
+
+    tokio::spawn(async move {
+        child
+            .wait()
+            .await
+            .expect("child process encountered an error");
+    });
+
+    stdin
+        .write_all(
+            format!(
+                "protocol=https\nhost=inv4-tinkernet\nusername={}\npassword={}\n\n",
+                &username, &password
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("could not write to stdin");
 
     // Separate source, destination and the force flag
     let mut refspec_iter = ref_arg.split(':');
@@ -276,7 +307,7 @@ async fn push(
 
                 let remove_call = Call::INV4(INV4Call::remove {
                     ips_id,
-                    assets: vec![(AnyId::IpfId(old_id), Alice.to_account_id())],
+                    assets: vec![(AnyId::IpfId(old_id), signer.account_id().clone())],
                     new_metadata: None,
                 });
 

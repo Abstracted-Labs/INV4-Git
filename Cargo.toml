@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sp-keyring = "6.0.0"
+sp-keyring = { git = "https://github.com/paritytech/substrate" }
+sc-keystore = { git = "https://github.com/paritytech/substrate" }
 ipfs-api = "0.16.0"
 cid = "0.8.6"
 hex = "0.4.3"

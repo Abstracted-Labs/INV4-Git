@@ -15,7 +15,11 @@ use std::{
     error::Error,
     io::Cursor,
 };
-use subxt::{ext::sp_core::H256, tx::PairSigner, OnlineClient, PolkadotConfig};
+use subxt::{
+    ext::sp_core::{sr25519::Pair, H256},
+    tx::PairSigner,
+    OnlineClient, PolkadotConfig,
+};
 use twox_hash::xxh3;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -192,7 +196,7 @@ impl RepoData {
         repo: &mut Repository,
         ipfs: &mut IpfsClient,
         chain_api: &OnlineClient<PolkadotConfig>,
-        signer: &PairSigner<PolkadotConfig, sp_keyring::sr25519::sr25519::Pair>,
+        signer: &PairSigner<PolkadotConfig, Pair>,
         ips_id: u32,
     ) -> Result<u64, Box<dyn Error>> {
         // Deleting `ref_dst` was requested
@@ -516,7 +520,7 @@ impl RepoData {
         repo: &Repository,
         ipfs: &mut IpfsClient,
         chain_api: &OnlineClient<PolkadotConfig>,
-        signer: &PairSigner<PolkadotConfig, sp_keyring::sr25519::sr25519::Pair>,
+        signer: &PairSigner<PolkadotConfig, Pair>,
     ) -> Result<u64, Box<dyn Error>> {
         eprintln!("Minting 2 IPFs");
 
@@ -690,7 +694,7 @@ impl RepoData {
         &self,
         ipfs: &mut IpfsClient,
         chain_api: &OnlineClient<PolkadotConfig>,
-        signer: &PairSigner<PolkadotConfig, sp_keyring::sr25519::sr25519::Pair>,
+        signer: &PairSigner<PolkadotConfig, Pair>,
         ips_id: u32,
     ) -> Result<(u64, Option<u64>), Box<dyn Error>> {
         let ipf_mint_tx = tinkernet::tx().ipf().mint(
