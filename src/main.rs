@@ -1,24 +1,32 @@
 #![allow(clippy::too_many_arguments)]
 
+use core::str::FromStr;
 use dirs::config_dir;
-use git2::Repository;
+use git2::{CredentialHelper, Repository};
 use ipfs_api::IpfsClient;
 use log::debug;
 use primitives::{BoxResult, Config, RepoData};
 use std::{
     env::args,
-    io::{self, Read, Write},
+    io::{self, BufRead, Read, Write},
     path::Path,
     process::Stdio,
 };
 use subxt::{ext::sp_core::sr25519::Pair as Sr25519Pair, subxt};
-use subxt::{ext::sp_core::Pair, tx::PairSigner};
+use subxt::{
+    ext::sp_core::Pair,
+    ext::{sp_core::crypto::SecretUri, sp_runtime::AccountId32},
+    tx::PairSigner,
+};
 use subxt::{OnlineClient, PolkadotConfig};
 use tinkernet::runtime_types::{
     pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as INV4Call, tinkernet_runtime::Call,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+
+use magic_crypt::new_magic_crypt;
+use magic_crypt::MagicCryptTrait;
 
 mod primitives;
 mod util;
@@ -60,7 +68,7 @@ pub async fn set_repo(ips_id: u32, api: OnlineClient<PolkadotConfig>) -> BoxResu
 
 #[tokio::main]
 async fn main() -> BoxResult<()> {
-    let (_, raw_url) = {
+    let (auth, raw_url) = {
         let mut args = args();
         args.next();
         (
@@ -69,6 +77,93 @@ async fn main() -> BoxResult<()> {
         )
     };
 
+    eprintln!("{:?} | {:?}", &auth, &raw_url);
+
+    if auth == String::from("_execute-external-command_")
+        && raw_url == String::from("_authentication-flow_")
+    {
+        // auth_flow().await
+        Ok(())
+    } else {
+        git(raw_url).await
+    }
+}
+
+async fn auth_flow() -> BoxResult<String> {
+    let mut cred_helper = CredentialHelper::new("https://inv4-tinkernet");
+    cred_helper.config(&git2::Config::open_default().unwrap());
+    let creds = cred_helper.execute();
+
+    Ok(if let Some((username, encrypted_seed)) = creds {
+        eprint!("enter password for {}: ", username);
+
+        let mut tty = open_tty()?;
+        let mut password = confirm(&mut tty)?;
+
+        password = password.trim().to_string();
+
+        let mcrypt = new_magic_crypt!(password, 256);
+
+        let seed = mcrypt.decrypt_base64_to_string(&encrypted_seed).unwrap();
+
+        seed
+    } else {
+        eprint!("Enter your private key/seed phrase: ");
+
+        let mut tty = open_tty()?;
+        let mut seed = confirm(&mut tty)?;
+
+        eprint!("Create a password: ");
+
+        let mut tty = open_tty()?;
+        let mut password = confirm(&mut tty)?;
+
+        eprint!("Give this account a nickname: ");
+
+        let mut tty = open_tty()?;
+        let mut name = confirm(&mut tty)?;
+
+        let mut cmd = Command::new("git");
+        cmd.arg("credential");
+        cmd.arg("approve");
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+
+        let mut child = cmd.spawn().expect("failed to spawn command");
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .expect("child did not have a handle to stdin");
+
+        name = name.trim().to_string();
+        seed = seed.trim().to_string();
+        password = password.trim().to_string();
+
+        let mcrypt = new_magic_crypt!(password, 256);
+        let encrypted_seed = mcrypt.encrypt_str_to_base64(&seed);
+
+        stdin
+            .write_all(
+                format!(
+                    "protocol=https\nhost=inv4-tinkernet\nusername={}\npassword={}\n\n",
+                    &name, &encrypted_seed
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("could not write to stdin");
+
+        drop(stdin);
+
+        child.wait_with_output().await.unwrap();
+
+        seed
+    })
+}
+
+async fn git(raw_url: String) -> BoxResult<()> {
     let (ips_id, subasset_id) = {
         let mut url = Path::new(&raw_url).components();
         url.next();
@@ -176,6 +271,19 @@ async fn main() -> BoxResult<()> {
     }
 }
 
+type Tty = std::io::BufReader<std::fs::File>;
+
+fn open_tty() -> io::Result<Tty> {
+    let f = std::fs::File::open("/dev/tty")?;
+    Ok(std::io::BufReader::new(f))
+}
+
+fn confirm(tty: &mut Tty) -> io::Result<String> {
+    let mut answer = String::new();
+    tty.read_line(&mut answer)?;
+    Ok(answer)
+}
+
 async fn push(
     api: &OnlineClient<PolkadotConfig>,
     remote_repo: &mut RepoData,
@@ -185,90 +293,10 @@ async fn push(
     mut ipfs: IpfsClient,
     ref_arg: &str,
 ) -> BoxResult<()> {
-    let mut cmd = Command::new("git");
-    cmd.arg("credential");
-    cmd.arg("fill");
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
+    let seed = auth_flow().await.unwrap();
 
-    let mut child = cmd.spawn().expect("failed to spawn command");
-
-    let stdout = child
-        .stdout
-        .take()
-        .expect("child did not have a handle to stdout");
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .expect("child did not have a handle to stdin");
-
-    let mut out_reader = BufReader::new(stdout).lines();
-
-    tokio::spawn(async move {
-        child
-            .wait()
-            .await
-            .expect("child process encountered an error");
-    });
-
-    // We use https://inv4-<chain> instead of inv4://<chain> because some credential helpers won't store unknown protocol credentials (e.g. osxkeychain)
-    stdin
-        .write_all("protocol=https\nhost=inv4-tinkernet\n\n".as_bytes())
-        .await
-        .expect("could not write to stdin");
-
-    eprintln!("Enter any username and then for password, seed phrase or private key ↓");
-
-    drop(stdin);
-
-    let mut username = String::new();
-    let mut password = String::new();
-
-    while let Some(line) = out_reader.next_line().await? {
-        if line.trim().starts_with("username=") {
-            username = line.trim_start_matches("username=").to_string();
-        }
-        if line.trim().starts_with("password=") {
-            password = line.trim_start_matches("password=").to_string();
-        }
-    }
-
-    let pair = Sr25519Pair::from_string(&password, None).expect("Invalid credentials");
+    let pair = Sr25519Pair::from_string(&seed, None).expect("Invalid credentials");
     let signer = PairSigner::new(pair);
-
-    let mut cmd = Command::new("git");
-    cmd.arg("credential");
-    cmd.arg("approve");
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-
-    let mut child = cmd.spawn().expect("failed to spawn command");
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .expect("child did not have a handle to stdin");
-
-    tokio::spawn(async move {
-        child
-            .wait()
-            .await
-            .expect("child process encountered an error");
-    });
-
-    stdin
-        .write_all(
-            format!(
-                "protocol=https\nhost=inv4-tinkernet\nusername={}\npassword={}\n\n",
-                &username, &password
-            )
-            .as_bytes(),
-        )
-        .await
-        .expect("could not write to stdin");
 
     // Separate source, destination and the force flag
     let mut refspec_iter = ref_arg.split(':');
