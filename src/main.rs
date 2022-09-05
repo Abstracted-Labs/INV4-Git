@@ -1,6 +1,5 @@
 #![allow(clippy::too_many_arguments)]
 
-use core::str::FromStr;
 use dirs::config_dir;
 use git2::{CredentialHelper, Repository};
 use ipfs_api::IpfsClient;
@@ -13,16 +12,12 @@ use std::{
     process::Stdio,
 };
 use subxt::{ext::sp_core::sr25519::Pair as Sr25519Pair, subxt};
-use subxt::{
-    ext::sp_core::Pair,
-    ext::{sp_core::crypto::SecretUri, sp_runtime::AccountId32},
-    tx::PairSigner,
-};
+use subxt::{ext::sp_core::Pair, tx::PairSigner};
 use subxt::{OnlineClient, PolkadotConfig};
 use tinkernet::runtime_types::{
     pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as INV4Call, tinkernet_runtime::Call,
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use magic_crypt::new_magic_crypt;
@@ -68,25 +63,14 @@ pub async fn set_repo(ips_id: u32, api: OnlineClient<PolkadotConfig>) -> BoxResu
 
 #[tokio::main]
 async fn main() -> BoxResult<()> {
-    let (auth, raw_url) = {
+    let raw_url = {
         let mut args = args();
         args.next();
-        (
-            args.next().ok_or("Missing alias argument.")?,
-            args.next().ok_or("Missing url argument.")?,
-        )
+        args.next();
+
+        args.next().ok_or("Missing url argument.")?
     };
-
-    eprintln!("{:?} | {:?}", &auth, &raw_url);
-
-    if auth == String::from("_execute-external-command_")
-        && raw_url == String::from("_authentication-flow_")
-    {
-        // auth_flow().await
-        Ok(())
-    } else {
-        git(raw_url).await
-    }
+    git(raw_url).await
 }
 
 async fn auth_flow() -> BoxResult<String> {
