@@ -37,7 +37,7 @@ pub async fn set_repo(ips_id: u32, api: OnlineClient<PolkadotConfig>) -> BoxResu
         .storage()
         .fetch(&ips_storage_address, None)
         .await?
-        .unwrap()
+        .expect("Couldn't find this repository on-chain")
         .data
         .0;
 
@@ -73,16 +73,56 @@ async fn main() -> BoxResult<()> {
     git(raw_url).await
 }
 
+#[cfg(target_family = "unix")]
+fn read_input() -> std::io::Result<String> {
+    let mut string = String::new();
+    let tty = std::fs::File::open("/dev/tty")?;
+    let mut reader = io::BufReader::new(tty);
+    reader.read_line(&mut string)?;
+    Ok(string.trim().to_string())
+}
+
+#[cfg(target_family = "windows")]
+fn read_input() -> std::io::Result<String> {
+    let mut string = String::new();
+    let handle = unsafe {
+        CreateFileA(
+            b"CONIN$\x00".as_ptr() as *const i8,
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    let mut stream = BufReader::new(unsafe { std::fs::File::from_raw_handle(handle) });
+
+    let reader_return = reader.read_line(&mut string);
+
+    // Newline for windows which otherwise prints on the same line.
+    // println!();
+
+    if reader_return.is_err() {
+        return Err(reader_return.unwrap_err());
+    }
+
+    Ok(string)
+}
+
 async fn auth_flow() -> BoxResult<String> {
     let mut cred_helper = CredentialHelper::new("https://inv4-tinkernet");
     cred_helper.config(&git2::Config::open_default().unwrap());
     let creds = cred_helper.execute();
 
     Ok(if let Some((username, encrypted_seed)) = creds {
-        eprint!("enter password for {}: ", username);
-
-        let mut tty = open_tty()?;
-        let mut password = confirm(&mut tty)?;
+        let mut password =
+            rpassword::prompt_password(format!("Enter password for {}: ", username))?;
 
         password = password.trim().to_string();
 
@@ -92,20 +132,12 @@ async fn auth_flow() -> BoxResult<String> {
 
         seed
     } else {
-        eprint!("Enter your private key/seed phrase: ");
+        let mut seed = rpassword::prompt_password("Enter your private key/seed phrase: ")?;
 
-        let mut tty = open_tty()?;
-        let mut seed = confirm(&mut tty)?;
-
-        eprint!("Create a password: ");
-
-        let mut tty = open_tty()?;
-        let mut password = confirm(&mut tty)?;
+        let mut password = rpassword::prompt_password("Create a password: ")?;
 
         eprint!("Give this account a nickname: ");
-
-        let mut tty = open_tty()?;
-        let mut name = confirm(&mut tty)?;
+        let name = read_input()?;
 
         let mut cmd = Command::new("git");
         cmd.arg("credential");
@@ -121,7 +153,6 @@ async fn auth_flow() -> BoxResult<String> {
             .take()
             .expect("child did not have a handle to stdin");
 
-        name = name.trim().to_string();
         seed = seed.trim().to_string();
         password = password.trim().to_string();
 
@@ -253,19 +284,6 @@ async fn git(raw_url: String) -> BoxResult<()> {
             }
         }?;
     }
-}
-
-type Tty = std::io::BufReader<std::fs::File>;
-
-fn open_tty() -> io::Result<Tty> {
-    let f = std::fs::File::open("/dev/tty")?;
-    Ok(std::io::BufReader::new(f))
-}
-
-fn confirm(tty: &mut Tty) -> io::Result<String> {
-    let mut answer = String::new();
-    tty.read_line(&mut answer)?;
-    Ok(answer)
 }
 
 async fn push(
