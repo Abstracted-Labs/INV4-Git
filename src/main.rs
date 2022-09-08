@@ -128,9 +128,7 @@ async fn auth_flow() -> BoxResult<String> {
 
         let mcrypt = new_magic_crypt!(password, 256);
 
-        let seed = mcrypt.decrypt_base64_to_string(&encrypted_seed).unwrap();
-
-        seed
+        mcrypt.decrypt_base64_to_string(&encrypted_seed).unwrap()
     } else {
         let mut seed = rpassword::prompt_password("Enter your private key/seed phrase: ")?;
 
