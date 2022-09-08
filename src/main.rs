@@ -382,7 +382,7 @@ async fn fetch(
         .fetch_to_ref_from_str(sha, name, &mut repo, &mut ipfs, api, ips_id)
         .await?;
 
-    println!();
+    tokio::io::stdout().write_all(b"\n").await?;
 
     Ok(())
 }
