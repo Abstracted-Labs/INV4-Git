@@ -17,6 +17,8 @@ dirs = "4.0.0"
 serde = "1.0.144"
 toml = "0.5.9"
 twox-hash = "1.6.3"
+magic-crypt = "3.1.10"
+rpassword = "7.0.0"
 
 [dependencies.tokio]
 version = "1.20.1"
