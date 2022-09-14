@@ -11,7 +11,7 @@ cid = "0.8.6"
 hex = "0.4.3"
 futures = "0.3.24"
 temp-dir = "0.1.11"
-git2 = "0.15.0"
+git2 = { version = "0.15.0", default-features = false }
 log = "0.4.17"
 dirs = "4.0.0"
 serde = "1.0.144"
