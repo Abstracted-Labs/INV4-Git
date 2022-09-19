@@ -15,7 +15,8 @@ use subxt::{ext::sp_core::sr25519::Pair as Sr25519Pair, subxt};
 use subxt::{ext::sp_core::Pair, tx::PairSigner};
 use subxt::{OnlineClient, PolkadotConfig};
 use tinkernet::runtime_types::{
-    pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as INV4Call, tinkernet_runtime::Call,
+    pallet_inv4::pallet::AnyId, pallet_inv4::pallet::Call as INV4Call,
+    pallet_utility::pallet::Call as UtilityCall, tinkernet_runtime::Call,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -29,7 +30,7 @@ mod util;
 #[subxt(runtime_metadata_path = "tinkernet_metadata.scale")]
 pub mod tinkernet {}
 
-pub async fn set_repo(ips_id: u32, api: OnlineClient<PolkadotConfig>) -> BoxResult<RepoData> {
+pub async fn get_repo(ips_id: u32, api: OnlineClient<PolkadotConfig>) -> BoxResult<RepoData> {
     let mut ipfs_client = IpfsClient::default();
     let ips_storage_address = tinkernet::storage().inv4().ip_storage(&ips_id);
 
@@ -231,7 +232,7 @@ async fn git(raw_url: String) -> BoxResult<()> {
 
     let api = OnlineClient::<PolkadotConfig>::from_url(config.chain_endpoint).await?;
 
-    let mut remote_repo = set_repo(ips_id, api.clone()).await?;
+    let mut remote_repo = get_repo(ips_id, api.clone()).await?;
     debug!("RepoData: {:#?}", remote_repo);
 
     loop {
@@ -330,24 +331,17 @@ async fn push(
                 .mint_return_new_old_id(&mut ipfs, api, &signer, ips_id)
                 .await?;
 
+            let mut calls: Vec<Call> = vec![];
+
             if let Some(old_id) = old_repo_data {
                 eprintln!("Removing old Repo Data with IPF ID: {}", old_id);
 
-                let remove_call = Call::INV4(INV4Call::remove {
+                calls.push(Call::INV4(INV4Call::remove {
                     ips_id,
+                    original_caller: Some(signer.account_id().clone()),
                     assets: vec![(AnyId::IpfId(old_id), signer.account_id().clone())],
                     new_metadata: None,
-                });
-
-                let multisig_remove_tx = tinkernet::tx().inv4().operate_multisig(
-                    false,
-                    (ips_id, subasset_id),
-                    remove_call,
-                );
-
-                api.tx()
-                    .sign_and_submit_default(&multisig_remove_tx, &signer)
-                    .await?;
+                }));
             }
 
             eprintln!(
@@ -355,19 +349,22 @@ async fn push(
                 ips_id
             );
 
-            let append_call = Call::INV4(INV4Call::append {
+            calls.push(Call::INV4(INV4Call::append {
                 ips_id,
+                original_caller: Some(signer.account_id().clone()),
                 assets: vec![AnyId::IpfId(pack_ipf_id), AnyId::IpfId(new_repo_data)], //ipf_id_list.into_iter().map(AnyId::IpfId).collect(),
                 new_metadata: None,
-            });
+            }));
 
-            let multisig_append_tx =
+            let batch_call = Call::Utility(UtilityCall::batch_all { calls });
+
+            let multisig_batch_tx =
                 tinkernet::tx()
                     .inv4()
-                    .operate_multisig(true, (ips_id, subasset_id), append_call);
+                    .operate_multisig(true, (ips_id, subasset_id), batch_call);
 
             api.tx()
-                .sign_and_submit_then_watch_default(&multisig_append_tx, &signer)
+                .sign_and_submit_then_watch_default(&multisig_batch_tx, &signer)
                 .await?
                 .wait_for_in_block()
                 .await?;
