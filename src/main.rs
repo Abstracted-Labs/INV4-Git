@@ -2,6 +2,7 @@
 
 use dirs::config_dir;
 use git2::{CredentialHelper, Repository};
+use hex::ToHex;
 use ipfs_api::IpfsClient;
 use log::debug;
 use primitives::{BoxResult, Config, RepoData};
@@ -11,7 +12,10 @@ use std::{
     path::Path,
     process::Stdio,
 };
-use subxt::{ext::sp_core::sr25519::Pair as Sr25519Pair, subxt};
+use subxt::{
+    ext::sp_core::sr25519::{Pair as Sr25519Pair, Public, Signature},
+    subxt,
+};
 use subxt::{ext::sp_core::Pair, tx::PairSigner};
 use subxt::{OnlineClient, PolkadotConfig};
 use tinkernet::runtime_types::{
@@ -64,14 +68,113 @@ pub async fn get_repo(ips_id: u32, api: OnlineClient<PolkadotConfig>) -> BoxResu
 
 #[tokio::main]
 async fn main() -> BoxResult<()> {
-    let raw_url = {
-        let mut args = args();
+    let mut args = args();
+    let (first_arg, second_arg) = {
         args.next();
-        args.next();
-
-        args.next().ok_or("Missing url argument.")?
+        (
+            args.next().ok_or("Missing first argument.")?,
+            args.next().ok_or("Missing url argument.")?,
+        )
     };
-    git(raw_url).await
+
+    if first_arg == "-Y" {
+        match second_arg.as_str() {
+            "verify" => {
+                let mut input = String::new();
+                let mut lines = io::stdin().lock().lines();
+                let mut breaks = 0;
+                while let Some(line) = lines.next() {
+                    let last_input = line.unwrap();
+
+                    if last_input.len() == 0 {
+                        if breaks > 0 {
+                            break;
+                        }
+                        breaks = breaks + 1;
+                    }
+
+                    if input.len() > 0 {
+                        input.push_str("\n");
+                    }
+
+                    input.push_str(&last_input);
+                }
+
+                args.next();
+                args.next();
+                args.next();
+                args.next();
+                args.next();
+                args.next();
+                args.next();
+
+                let path = args.next().unwrap();
+                let file = std::fs::File::open(&path)?;
+                let mut buf_reader = io::BufReader::new(file);
+                let mut contents = String::new();
+                buf_reader.read_to_string(&mut contents)?;
+
+                let mut lines = contents.lines();
+                lines.next();
+
+                let signer = lines.next().unwrap();
+                let signature = lines.next().unwrap();
+
+                let sig = &Signature::from_raw(hex::decode(signature).unwrap().try_into().unwrap());
+                let public = &Public::from_raw(hex::decode(signer).unwrap().try_into().unwrap());
+
+                let verified = Sr25519Pair::verify(sig, input.as_bytes(), public);
+
+                println!(
+                    "{} signature for 0x{}",
+                    if verified { "Good" } else { "Bad" },
+                    signer
+                );
+                Ok(())
+            }
+
+            "find-principals" => {
+                println!("principal");
+                Ok(())
+            }
+            "sign" => {
+                args.next();
+                args.next();
+                args.next();
+                args.next();
+
+                let path = args.next().ok_or("Missing file argument")?;
+
+                let file = std::fs::File::open(&path)?;
+                let mut buf_reader = io::BufReader::new(file);
+                let mut contents = String::new();
+                buf_reader.read_to_string(&mut contents)?;
+
+                let seed = auth_flow().await.unwrap();
+
+                let pair = Sr25519Pair::from_string(&seed, None).expect("Invalid credentials");
+
+                let bytes = contents.trim().as_bytes();
+
+                let signature = pair.sign(bytes);
+
+                let mut result = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(format!("{}.sig", path))?;
+
+                writeln!(result, "-----BEGIN SSH SIGNATURE-----")?;
+                writeln!(result, "{}", pair.public().encode_hex::<String>())?;
+                writeln!(result, "{}", &signature.0.encode_hex::<String>())?;
+                writeln!(result, "-----END SSH SIGNATURE-----")?;
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    } else {
+        git(second_arg).await
+    }
 }
 
 #[cfg(target_family = "unix")]
