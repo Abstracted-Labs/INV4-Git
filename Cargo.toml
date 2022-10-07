@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sp-keyring = { git = "https://github.com/paritytech/substrate" }
-sc-keystore = { git = "https://github.com/paritytech/substrate" }
+#sp-keyring = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.29" }
+#sc-keystore = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.29" }
 ipfs-api = "0.16.0"
 cid = "0.8.6"
 hex = "0.4.3"
@@ -19,6 +19,9 @@ toml = "0.5.9"
 twox-hash = "1.6.3"
 magic-crypt = "3.1.10"
 rpassword = "7.0.0"
+reqwest = { version = "0.11.12", features = ["multipart", "json"], optional = true }
+base64 = { version = "0.13.0", optional = true }
+serde_json = { version = "1.0.85", optional = true }
 
 [dependencies.tokio]
 version = "1.20.1"
@@ -26,10 +29,15 @@ features = ["macros", "rt-multi-thread", "process", "io-std"]
 
 [dependencies.subxt]
 git = "https://github.com/paritytech/subxt"
-rev = "599107b4322d2b959e26d9cf5269bc1ed4375a8c"
+rev = "51179a8b72472d0b43c91cda75a1ddc3fddb9555"
 
 [dependencies.codec]
 package = "parity-scale-codec"
-version = "3.1.5"
+version = "3.2.1"
 default-features = false
 features = ["derive", "full", "bit-vec"]
+
+
+[features]
+default = []
+crust = ["reqwest", "base64", "serde_json"]

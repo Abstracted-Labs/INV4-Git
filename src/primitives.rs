@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     error::Error,
-    io::Cursor,
 };
 use subxt::{
     ext::sp_core::{sr25519::Pair, H256},
@@ -595,14 +594,21 @@ impl RepoData {
         }
 
         debug!("Pushing MultiObject to IPFS");
-        let ipfs_hash = &Cid::try_from(ipfs.add(Cursor::new(multi_object.encode())).await?.hash)?
-            .to_bytes()[2..];
+
+        #[cfg(not(feature = "crust"))]
+        let ipfs_hash = ipfs
+            .add(std::io::Cursor::new(multi_object.encode()))
+            .await?
+            .hash;
+
+        #[cfg(feature = "crust")]
+        let ipfs_hash = crate::crust::send_to_crust(signer, multi_object.encode()).await?;
 
         debug!("Sending MultiObject to the chain");
 
         let ipf_mint_tx = tinkernet::tx().ipf().mint(
             multi_object.hash.as_bytes().to_vec(),
-            H256::from_slice(ipfs_hash),
+            H256::from_slice(&Cid::try_from(ipfs_hash)?.to_bytes()[2..]),
         );
 
         let events = chain_api
@@ -697,11 +703,15 @@ impl RepoData {
         signer: &PairSigner<PolkadotConfig, Pair>,
         ips_id: u32,
     ) -> Result<(u64, Option<u64>), Box<dyn Error>> {
+        #[cfg(not(feature = "crust"))]
+        let ipfs_hash = ipfs.add(std::io::Cursor::new(self.encode())).await?.hash;
+
+        #[cfg(feature = "crust")]
+        let ipfs_hash = crate::crust::send_to_crust(signer, self.encode()).await?;
+
         let ipf_mint_tx = tinkernet::tx().ipf().mint(
             b"RepoData".to_vec(),
-            H256::from_slice(
-                &Cid::try_from(ipfs.add(Cursor::new(self.encode())).await?.hash)?.to_bytes()[2..],
-            ),
+            H256::from_slice(&Cid::try_from(ipfs_hash)?.to_bytes()[2..]),
         );
 
         let events = chain_api
