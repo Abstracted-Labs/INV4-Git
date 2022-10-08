@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     error::Error,
-    io::Cursor,
 };
 use subxt::{
     ext::sp_core::{sr25519::Pair, H256},
@@ -71,14 +70,20 @@ impl MultiObject {
                     .ok_or("Internal error: IPF listed from IPS does not exist")?;
 
                 if String::from_utf8(ipf_info.metadata.0.clone())? == *hash {
-                    return Ok(Self::decode(
-                        &mut ipfs
-                            .cat(&generate_cid(ipf_info.data.0.into())?.to_string())
-                            .map_ok(|c| c.to_vec())
-                            .try_concat()
-                            .await?
-                            .as_slice(),
-                    )?);
+                    #[cfg(not(feature = "crust"))]
+                    let data = &mut ipfs
+                        .cat(&generate_cid(ipf_info.data.0.into())?.to_string())
+                        .map_ok(|c| c.to_vec())
+                        .try_concat()
+                        .await?;
+
+                    #[cfg(feature = "crust")]
+                    let data = crate::crust::get_from_crust(
+                        generate_cid(ipf_info.data.0.into())?.to_string(),
+                    )
+                    .await?;
+
+                    return Ok(Self::decode(&mut data.as_slice())?);
                 }
             }
         }
@@ -179,6 +184,11 @@ pub struct RepoData {
 impl RepoData {
     pub async fn from_ipfs(ipfs_hash: H256, ipfs: &mut IpfsClient) -> Result<Self, Box<dyn Error>> {
         let refs_cid = generate_cid(ipfs_hash)?.to_string();
+
+        #[cfg(feature = "crust")]
+        let refs_content = crate::crust::get_from_crust(refs_cid.clone()).await?;
+
+        #[cfg(not(feature = "crust"))]
         let refs_content = ipfs
             .cat(&refs_cid)
             .map_ok(|c| c.to_vec())
@@ -595,14 +605,21 @@ impl RepoData {
         }
 
         debug!("Pushing MultiObject to IPFS");
-        let ipfs_hash = &Cid::try_from(ipfs.add(Cursor::new(multi_object.encode())).await?.hash)?
-            .to_bytes()[2..];
+
+        #[cfg(not(feature = "crust"))]
+        let ipfs_hash = ipfs
+            .add(std::io::Cursor::new(multi_object.encode()))
+            .await?
+            .hash;
+
+        #[cfg(feature = "crust")]
+        let ipfs_hash = crate::crust::send_to_crust(signer, multi_object.encode()).await?;
 
         debug!("Sending MultiObject to the chain");
 
         let ipf_mint_tx = tinkernet::tx().ipf().mint(
             multi_object.hash.as_bytes().to_vec(),
-            H256::from_slice(ipfs_hash),
+            H256::from_slice(&Cid::try_from(ipfs_hash)?.to_bytes()[2..]),
         );
 
         let events = chain_api
@@ -697,11 +714,15 @@ impl RepoData {
         signer: &PairSigner<PolkadotConfig, Pair>,
         ips_id: u32,
     ) -> Result<(u64, Option<u64>), Box<dyn Error>> {
+        #[cfg(not(feature = "crust"))]
+        let ipfs_hash = ipfs.add(std::io::Cursor::new(self.encode())).await?.hash;
+
+        #[cfg(feature = "crust")]
+        let ipfs_hash = crate::crust::send_to_crust(signer, self.encode()).await?;
+
         let ipf_mint_tx = tinkernet::tx().ipf().mint(
             b"RepoData".to_vec(),
-            H256::from_slice(
-                &Cid::try_from(ipfs.add(Cursor::new(self.encode())).await?.hash)?.to_bytes()[2..],
-            ),
+            H256::from_slice(&Cid::try_from(ipfs_hash)?.to_bytes()[2..]),
         );
 
         let events = chain_api

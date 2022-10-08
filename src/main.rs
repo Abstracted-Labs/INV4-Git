@@ -27,6 +27,9 @@ use magic_crypt::MagicCryptTrait;
 mod primitives;
 mod util;
 
+#[cfg(feature = "crust")]
+mod crust;
+
 #[subxt(runtime_metadata_path = "tinkernet_metadata.scale")]
 pub mod tinkernet {}
 

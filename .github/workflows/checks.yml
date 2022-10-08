@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Build
       run: cargo build --verbose
       
@@ -21,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Run tests
       run: cargo test --verbose
       
@@ -28,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Run clippy
         run: cargo clippy -- -D warnings
         
@@ -35,5 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Run cargofmt
         run: cargo fmt --all -- --check
