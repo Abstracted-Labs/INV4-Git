@@ -71,3 +71,17 @@ pub async fn send_to_crust(
 
     Ok(cid)
 }
+
+pub async fn get_from_crust(cid: String) -> BoxResult<Vec<u8>> {
+    let client = reqwest::Client::new();
+
+    let data = client
+        .get(format!("https://crustwebsites.net/ipfs/{}", cid))
+        .send()
+        .await?
+        .bytes()
+        .await?
+        .to_vec();
+
+    Ok(data)
+}

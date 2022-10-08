@@ -70,14 +70,20 @@ impl MultiObject {
                     .ok_or("Internal error: IPF listed from IPS does not exist")?;
 
                 if String::from_utf8(ipf_info.metadata.0.clone())? == *hash {
-                    return Ok(Self::decode(
-                        &mut ipfs
-                            .cat(&generate_cid(ipf_info.data.0.into())?.to_string())
-                            .map_ok(|c| c.to_vec())
-                            .try_concat()
-                            .await?
-                            .as_slice(),
-                    )?);
+                    #[cfg(not(feature = "crust"))]
+                    let data = &mut ipfs
+                        .cat(&generate_cid(ipf_info.data.0.into())?.to_string())
+                        .map_ok(|c| c.to_vec())
+                        .try_concat()
+                        .await?;
+
+                    #[cfg(feature = "crust")]
+                    let data = crate::crust::get_from_crust(
+                        generate_cid(ipf_info.data.0.into())?.to_string(),
+                    )
+                    .await?;
+
+                    return Ok(Self::decode(&mut data.as_slice())?);
                 }
             }
         }
@@ -178,6 +184,11 @@ pub struct RepoData {
 impl RepoData {
     pub async fn from_ipfs(ipfs_hash: H256, ipfs: &mut IpfsClient) -> Result<Self, Box<dyn Error>> {
         let refs_cid = generate_cid(ipfs_hash)?.to_string();
+
+        #[cfg(feature = "crust")]
+        let refs_content = crate::crust::get_from_crust(refs_cid.clone()).await?;
+
+        #[cfg(not(feature = "crust"))]
         let refs_content = ipfs
             .cat(&refs_cid)
             .map_ok(|c| c.to_vec())
