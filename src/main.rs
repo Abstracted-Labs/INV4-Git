@@ -361,10 +361,12 @@ async fn push(
 
             let batch_call = Call::Utility(UtilityCall::batch_all { calls });
 
-            let multisig_batch_tx =
-                tinkernet::tx()
-                    .inv4()
-                    .operate_multisig(true, (ips_id, subasset_id), batch_call);
+            let multisig_batch_tx = tinkernet::tx().inv4().operate_multisig(
+                true,
+                (ips_id, subasset_id),
+                Some(b"{protocol:\"inv4-git\",type:\"push\"}".to_vec()),
+                batch_call,
+            );
 
             api.tx()
                 .sign_and_submit_then_watch_default(&multisig_batch_tx, &signer)
