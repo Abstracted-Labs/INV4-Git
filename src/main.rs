@@ -7,7 +7,7 @@ use log::debug;
 use primitives::{BoxResult, Config, RepoData};
 use std::{
     env::args,
-    io::{self, BufRead, Read, Write},
+    io::{self, BufRead, Read},
     path::Path,
     process::Stdio,
 };
@@ -226,9 +226,9 @@ async fn git(raw_url: String) -> BoxResult<()> {
             chain_endpoint: String::from("wss://brainstorm.invarch.network:443"),
         };
 
-        let mut f = std::fs::File::create(config_file_path)?;
+        //  let mut f = std::fs::File::create(config_file_path)?;
 
-        f.write_all(toml::to_string(&c)?.as_bytes())?;
+        //  f.write_all(toml::to_string(&c)?.as_bytes())?;
 
         c
     };
