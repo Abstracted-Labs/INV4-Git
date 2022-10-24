@@ -223,7 +223,7 @@ async fn git(raw_url: String) -> BoxResult<()> {
         toml::from_str(&contents)?
     } else {
         let c = Config {
-            chain_endpoint: String::from("ws://127.0.0.1:9944"),
+            chain_endpoint: String::from("wss://brainstorm.invarch.network:443"),
         };
 
         let mut f = std::fs::File::create(config_file_path)?;
@@ -364,7 +364,7 @@ async fn push(
             let multisig_batch_tx = tinkernet::tx().inv4().operate_multisig(
                 true,
                 (ips_id, subasset_id),
-                Some(b"{protocol:\"inv4-git\",type:\"push\"}".to_vec()),
+                Some(b"{\"protocol\":\"inv4-git\",\"type\":\"push\"}".to_vec()),
                 batch_call,
             );
 
