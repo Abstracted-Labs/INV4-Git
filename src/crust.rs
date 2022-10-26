@@ -1,3 +1,4 @@
+use crate::compression;
 use crate::primitives::BoxResult;
 use serde::{Deserialize, Serialize};
 use subxt::ext::sp_core::sr25519::Pair as Sr25519Pair;
