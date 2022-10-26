@@ -7,7 +7,7 @@ pub fn compress_data(data: Vec<u8>) -> Vec<u8> {
     let mut v = vec![];
     compressor.read_to_end(&mut v).unwrap();
 
-    return v;
+    v
 }
 
 pub fn decompress_data(data: Vec<u8>) -> Vec<u8> {
@@ -16,5 +16,5 @@ pub fn decompress_data(data: Vec<u8>) -> Vec<u8> {
     let mut v = vec![];
     decompressor.read_to_end(&mut v).unwrap();
 
-    return v;
+    v
 }

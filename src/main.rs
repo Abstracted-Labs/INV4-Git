@@ -223,12 +223,9 @@ async fn git(raw_url: String) -> BoxResult<()> {
 
         toml::from_str(&contents)?
     } else {
-        let c = Config {
+        Config {
             chain_endpoint: String::from("wss://brainstorm.invarch.network:443"),
-        };
-        //  let mut f = std::fs::File::create(config_file_path)?;
-        //  f.write_all(toml::to_string(&c)?.as_bytes())?;
-        c
+        }
     };
 
     let api = OnlineClient::<PolkadotConfig>::from_url(config.chain_endpoint).await?;
