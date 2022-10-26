@@ -1,4 +1,5 @@
 use crate::{
+    compression::{compress_data, decompress_data},
     error,
     tinkernet::{self, runtime_types::pallet_inv4::pallet::AnyId},
     util::generate_cid,
@@ -71,7 +72,7 @@ impl MultiObject {
 
                 if String::from_utf8(ipf_info.metadata.0.clone())? == *hash {
                     #[cfg(not(feature = "crust"))]
-                    let data = &mut ipfs
+                    let data = ipfs
                         .cat(&generate_cid(ipf_info.data.0.into())?.to_string())
                         .map_ok(|c| c.to_vec())
                         .try_concat()
@@ -83,7 +84,7 @@ impl MultiObject {
                     )
                     .await?;
 
-                    return Ok(Self::decode(&mut data.as_slice())?);
+                    return Ok(Self::decode(&mut decompress_data(data).as_slice())?);
                 }
             }
         }
@@ -195,7 +196,7 @@ impl RepoData {
             .try_concat()
             .await?;
 
-        Ok(Self::decode(&mut refs_content.as_slice())?)
+        Ok(Self::decode(&mut decompress_data(refs_content).as_slice())?)
     }
 
     pub async fn push_ref_from_str(
@@ -606,14 +607,13 @@ impl RepoData {
 
         debug!("Pushing MultiObject to IPFS");
 
+        let data = compress_data(multi_object.encode());
+
         #[cfg(not(feature = "crust"))]
-        let ipfs_hash = ipfs
-            .add(std::io::Cursor::new(multi_object.encode()))
-            .await?
-            .hash;
+        let ipfs_hash = ipfs.add(std::io::Cursor::new(data)).await?.hash;
 
         #[cfg(feature = "crust")]
-        let ipfs_hash = crate::crust::send_to_crust(signer, multi_object.encode()).await?;
+        let ipfs_hash = crate::crust::send_to_crust(signer, data).await?;
 
         debug!("Sending MultiObject to the chain");
 
@@ -714,11 +714,13 @@ impl RepoData {
         signer: &PairSigner<PolkadotConfig, Pair>,
         ips_id: u32,
     ) -> Result<(u64, Option<u64>), Box<dyn Error>> {
+        let data = compress_data(self.encode());
+
         #[cfg(not(feature = "crust"))]
-        let ipfs_hash = ipfs.add(std::io::Cursor::new(self.encode())).await?.hash;
+        let ipfs_hash = ipfs.add(std::io::Cursor::new(data)).await?.hash;
 
         #[cfg(feature = "crust")]
-        let ipfs_hash = crate::crust::send_to_crust(signer, self.encode()).await?;
+        let ipfs_hash = crate::crust::send_to_crust(signer, data).await?;
 
         let ipf_mint_tx = tinkernet::tx().ipf().mint(
             b"RepoData".to_vec(),
