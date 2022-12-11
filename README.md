@@ -1,10 +1,10 @@
-# git-remote-inv4
-A Git helper that integrates INV4 with the Git protocol.
+# INV4-Git
+A Git helper that integrates the [INV4](https://github.com/InvArch/InvArch-Frames/tree/main/INV4) protocol with the Git protocol for blockchain-based git hosting & version-contol
 
 ## Installing
 Make sure you already have `cargo` and `rust` installed. Then:
 ```sh
-cargo install --git https://github.com/InvArch/INV4-Git
+cargo install --git https://github.com/InvArch/INV4-Git --features crust
 ```
 The binary will be installed at `~/.cargo/bin/` as `git-remote-inv4`
 
