@@ -41,7 +41,7 @@ pub async fn send_to_crust(
     let client = reqwest::Client::new();
 
     let cid = client
-        .post("https://crustwebsites.net/api/v0/add")
+        .post("https://gw.crustfiles.app/api/v0/add")
         .header("Authorization", format!("Basic {}", base64))
         .multipart(
             reqwest::multipart::Form::new().part("file", reqwest::multipart::Part::bytes(data)),
@@ -77,7 +77,7 @@ pub async fn get_from_crust(cid: String) -> BoxResult<Vec<u8>> {
     let client = reqwest::Client::new();
 
     let data = client
-        .get(format!("https://crustwebsites.net/ipfs/{}", cid))
+        .get(format!("https://gw.crustfiles.app/ipfs/{}", cid))
         .send()
         .await?
         .bytes()
