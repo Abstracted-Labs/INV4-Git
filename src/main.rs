@@ -224,7 +224,7 @@ async fn git(raw_url: String) -> BoxResult<()> {
         toml::from_str(&contents)?
     } else {
         Config {
-            chain_endpoint: String::from("wss://brainstorm.invarch.network:443"),
+            chain_endpoint: String::from("wss://tinker.invarch.network:443"),
         }
     };
 
